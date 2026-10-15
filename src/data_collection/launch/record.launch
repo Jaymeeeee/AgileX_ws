@@ -1,0 +1,12 @@
+<launch>
+  <arg name="config" default="$(find data_collection)/config/recording.yaml"/>
+  <arg name="auto_start" default="false"/>
+  <arg name="allow_partial" default="false"/>
+  <arg name="output_dir" default="$(env HOME)/AgileX_ws/bags"/>
+  <node pkg="data_collection" type="bag_recorder.py" name="agilex_recorder" output="screen" required="true">
+    <rosparam command="load" file="$(arg config)"/>
+    <param name="auto_start" value="$(arg auto_start)"/>
+    <param name="allow_partial" value="$(arg allow_partial)"/>
+    <param name="output_dir" value="$(arg output_dir)"/>
+  </node>
+</launch>

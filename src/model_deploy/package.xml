@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>model_deploy</name>
+  <version>0.1.0</version>
+  <description>Reserved package for future trained-model deployment; no controller implemented</description>
+  <maintainer email="robot@localhost.localdomain">Robot Lab</maintainer>
+  <license>MIT</license>
+  <buildtool_depend>catkin</buildtool_depend>
+</package>

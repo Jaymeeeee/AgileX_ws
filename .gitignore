@@ -1,0 +1,22 @@
+# 编译产物
+/build/
+/devel/
+/install/
+
+# 采集数据、日志和模型权重
+/bags/
+/logs/
+/checkpoints/
+*.bag
+*.bag.active
+*.bag.metadata/
+
+# Python 缓存与环境
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+
+# 本地配置
+.env
+.vscode/

@@ -1,0 +1,16 @@
+<launch>
+  <arg name="camera"/>
+  <arg name="serial_no"/>
+  <arg name="width" default="640"/>
+  <arg name="height" default="480"/>
+  <arg name="fps" default="15"/>
+  <group ns="$(arg camera)">
+    <node pkg="hardware_bringup" type="realsense_images" name="images" output="screen" required="true">
+      <param name="serial_no" type="str" value="$(arg serial_no)"/>
+      <param name="frame_prefix" type="str" value="$(arg camera)"/>
+      <param name="width" value="$(arg width)"/>
+      <param name="height" value="$(arg height)"/>
+      <param name="fps" value="$(arg fps)"/>
+    </node>
+  </group>
+</launch>
