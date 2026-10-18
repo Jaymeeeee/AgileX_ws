@@ -25,6 +25,8 @@ class Manager:
     def __init__(self):
         self.cfg_path=rospy.get_param('~config')
         self.cfg=load_config(self.cfg_path)
+        self.mode=rospy.get_param('~mode','record')
+        if self.mode not in ('record','deploy'):raise ValueError('mode must be record or deploy')
         fps=int(rospy.get_param('~fps',0))
         if fps:
             if fps not in (6,15,30):raise ValueError('fps must be 6, 15 or 30')
@@ -33,6 +35,8 @@ class Manager:
         self.cameras=select(rospy.get_param('~cameras','all'),self.cfg['cameras'])
         if not self.arms and not self.cameras:raise ValueError('Select at least one device')
         self.specs=topic_specs(self.cfg,self.arms,self.cameras)
+        if self.mode=='deploy':
+            self.specs=[s for s in self.specs if not s['topic'].endswith(('/leader_targets','/gripper/target_stamped'))]
         self.pub=rospy.Publisher('/agilex/hardware/status',String,queue_size=1,latch=True)
         self.diag=rospy.Publisher('/agilex/hardware/diagnostics',DiagnosticArray,queue_size=1)
         self.children=[]
@@ -47,7 +51,7 @@ class Manager:
         record_topics=[s['topic'] for s in self.specs]
         record_topics += ['/piper/'+side+'_bus/events' for side in self.arms]
         record_topics += ['/agilex/hardware/status','/agilex/hardware/diagnostics']
-        payload=dict(state=state,reason=reason,stamp=time.time(),arms=self.arms,cameras=self.cameras,
+        payload=dict(state=state,reason=reason,stamp=time.time(),mode=self.mode,arms=self.arms,cameras=self.cameras,
                      config=self.cfg,calibration=self.calibration,topics=rows,record_topics=record_topics)
         self.pub.publish(String(data=json.dumps(payload,ensure_ascii=False)))
         diag=DiagnosticArray();diag.header.stamp=rospy.Time.now()
@@ -95,7 +99,7 @@ class Manager:
         conflicts=[s['topic'] for s in self.specs if s['topic'] in existing]
         if conflicts:raise RuntimeError('Topics already published, stop old drivers: '+str(conflicts))
         # Check every selected CAN before starting any camera or arm instance.
-        for side in self.arms:check_can(self.cfg['arms'][side]['channel'],self.cfg['arm_settings']['bitrate'])
+        for side in self.arms:check_can(self.cfg['arms'][side]['channel'],self.cfg['arm_settings']['bitrate'],self.mode)
         if rospy.get_param('~dry_run',False):
             for s in self.specs:rospy.loginfo('%s : %s',s['topic'],s['meaning'])
             self.publish('dry_run','configuration/preflight only; no devices started')
@@ -103,7 +107,7 @@ class Manager:
         self.monitor=TopicMonitor(self.specs)
         for side in self.arms:
             self.spawn('arm:'+side,['rosrun','hardware_bringup','piper_state_bridge.py',
-                '__name:=agilex_'+side+'_state','_config:='+self.cfg_path,'_side:='+side])
+                '__name:=agilex_'+side+'_state','_config:='+self.cfg_path,'_side:='+side,'_mode:='+self.mode])
             self.wait_group('arm:'+side,self.cfg['arm_settings']['startup_timeout_sec'])
         for name in self.cameras:
             self.spawn('camera:'+name,camera_command(self.cfg,name))

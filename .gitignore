@@ -7,6 +7,8 @@
 /bags/
 /logs/
 /checkpoints/
+/datasets/
+/outputs/
 *.bag
 *.bag.active
 *.bag.metadata/

@@ -12,21 +12,29 @@ module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
 class RecordingTests(unittest.TestCase):
     def test_completed_output_allowed_but_active_output_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
-            path=Path(tmp)/'episode.bag';path.write_bytes(b'previous recording')
+            path=Path(tmp)/'episode';path.mkdir()
+            bag=path/'data.bag';bag.write_bytes(b'previous recording')
             self.assertEqual(module.output_error(path),'')
-            Path(str(path)+'.active').touch()
+            (path/'data.bag.active').touch()
             self.assertIn('.active',module.output_error(path))
-            self.assertEqual(path.read_bytes(),b'previous recording')
+            self.assertEqual(bag.read_bytes(),b'previous recording')
 
     def test_output_and_metadata_symlinks_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
-            path=Path(tmp)/'episode.bag';target=Path(tmp)/'other';target.write_text('keep')
+            path=Path(tmp)/'episode';target=Path(tmp)/'other';target.write_text('keep')
             path.symlink_to(target)
             self.assertTrue(module.output_error(path));path.unlink()
-            metadata=Path(str(path)+'.metadata');metadata.mkdir()
-            (metadata/'manifest.json').symlink_to(target)
+            path.mkdir()
+            (path/'manifest.json').symlink_to(target)
             self.assertTrue(module.output_error(path))
             self.assertEqual(target.read_text(),'keep')
+
+    def test_output_rejects_old_bag_path_and_regular_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertTrue(module.output_error(Path(tmp)/'episode.bag'))
+            path=Path(tmp)/'episode';path.write_text('keep')
+            self.assertTrue(module.output_error(path))
+            self.assertEqual(path.read_text(),'keep')
 
     def state(self):
         return dict(state='ready',stamp=time.time(),arms=['left','right'],cameras=['cam_h','cam_l','cam_r'],

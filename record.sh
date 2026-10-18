@@ -18,8 +18,8 @@ case "${1:-}" in
     exec roslaunch data_collection record.launch auto_start:=true "$@"
     ;;
   *)
-    echo 'Usage: record.sh --output=/absolute/path/episode.bag [--allow-partial]' >&2
-    echo 'Press Ctrl+C to stop and save. Reusing an output filename overwrites the previous recording.' >&2
+    echo 'Usage: record.sh --output=/absolute/path/episode_directory [--allow-partial]' >&2
+    echo 'Press Ctrl+C to save data.bag, manifest.json and rosbag.log. Reusing the directory overwrites the previous recording.' >&2
     exit 2
     ;;
 esac

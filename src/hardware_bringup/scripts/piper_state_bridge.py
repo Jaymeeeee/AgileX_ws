@@ -18,14 +18,20 @@ def main():
     side = rospy.get_param('~side')
     arm = cfg['arms'][side]
     settings = cfg['arm_settings']
+    mode = rospy.get_param('~mode', 'record')
     if rospy.get_param('/use_sim_time', False):
         raise RuntimeError('Live CAN acquisition requires /use_sim_time=false')
-    check_can(arm['channel'], settings['bitrate'])
+    check_can(arm['channel'], settings['bitrate'], mode)
     decoder = Decoder(arm, settings['assembly_span_sec'])
     prefix = '/piper/'+side+'_bus'
     pubs = {kind:rospy.Publisher(prefix+'/'+kind, JointState, queue_size=100,
                                latch=kind in ('leader_targets','gripper/target_stamped')) for kind in
             ('joint_states', 'leader_targets', 'gripper/actual_stamped', 'gripper/target_stamped')}
+    # In deployment these frames can be computer commands, not demonstrations.
+    if mode == 'deploy':
+        for kind in ('leader_targets', 'gripper/target_stamped'):
+            pubs[kind].unregister()
+            del pubs[kind]
     status_pub = rospy.Publisher(prefix+'/status', String, queue_size=30)
     gripper_pub = rospy.Publisher(prefix+'/gripper/status', String, queue_size=30)
     motor_pub = rospy.Publisher(prefix+'/motor_feedback', MotorFeedback, queue_size=30)
@@ -37,7 +43,7 @@ def main():
     try:
         while not rospy.is_shutdown():
             if time.monotonic() >= next_check:
-                check_can(arm['channel'], settings['bitrate'])
+                check_can(arm['channel'], settings['bitrate'], mode)
                 next_check = time.monotonic()+settings['can_recheck_sec']
             frame = bus.recv(timeout=0.1)
             if frame is None:
@@ -47,6 +53,10 @@ def main():
                 raise RuntimeError('CAN clock/backlog age outside limit: '+str(age))
             event = decoder.feed(frame)
             if event is None:
+                continue
+            if mode == 'deploy' and event['kind'] in ('leader_targets','gripper/target_stamped'):
+                event['command_source'] = 'bus_command_echo_not_leader_measurement'
+                events_pub.publish(String(data=json.dumps(event, separators=(',', ':'), allow_nan=False)))
                 continue
             payload = String(data=json.dumps(event, separators=(',', ':'), allow_nan=False))
             events_pub.publish(payload)

@@ -1,33 +1,31 @@
 # AgileX_ws：双组 Piper 主从臂与三台 D435
 
-ROS 1 Noetic 工作空间，用于硬件状态发布和 rosbag 采集。机械臂 CAN 采用只接收模式，不发送使能、回零或运动指令；模型部署尚未实现。
+ROS 1 Noetic 工作空间，用于硬件状态发布、rosbag 采集、LeRobot 数据转换、ACT 训练及双从臂部署。默认采集模式下 CAN 只接收；部署、复位和实机轨迹回放由独立 SDK 控制器下发动作。
 
-## 包与配置
+完整流程：**准备环境 → 启动硬件 → 录制演示 → 转换数据 → 训练 ACT → 部署验证**。
 
-| 包 | 功能 |
-| --- | --- |
-| `hardware_bringup` | 启动相机、解析 CAN、发布硬件数据和就绪状态 |
-| `data_collection` | 录制 rosbag、无损压缩、保存配置并检查录制结果 |
-| `model_deploy` | 模型部署占位包 |
+- [环境准备](#环境准备)
+- [硬件与运行模式](#硬件与运行模式)
+- [数据采集](#数据采集)
+- [数据转换与-act-训练](#数据转换与-act-训练)
+- [模型部署与实机操作](#模型部署与实机操作)
+- [配置与详细文档](#配置与详细文档)
 
-- [hardware.yaml](src/hardware_bringup/config/hardware.yaml)：设备映射、相机参数和健康检查阈值。
-- [recording.yaml](src/data_collection/config/recording.yaml)：录制路径、压缩、分包和磁盘阈值。
-- `bags/`：录制数据；`logs/`：测试和运行记录。
+## 环境准备
 
-依赖 ROS Noetic、RealSense C++ SDK、python-can 和 pyAgxArm 1.0.0。入口脚本自动加载环境，使用系统 Python 3.8。直接运行 ROS 命令前执行：
+依赖 ROS Noetic、RealSense C++ SDK、python-can 和 pyAgxArm 1.0.0。ROS 使用系统 Python 3.8；LeRobot 转换、训练及推理使用独立 Python 3.12 环境，本机为 Conda `lerobot`。入口脚本自动加载或隔离相应环境。
+
+直接运行 ROS 命令前加载工作空间；修改代码后编译、检查：
 
 ```bash
 source ~/AgileX_ws/env.sh
-```
-
-修改代码后编译、检查：
-
-```bash
 ~/AgileX_ws/build.sh
 ~/AgileX_ws/test.sh
 ```
 
-## 设备映射
+LeRobot 依赖安装见[转换环境](src/data_collection/README.md#转换环境)，本地 fork 的维护方法见 [third_party/README.md](third_party/README.md)。本仓库脚本包含本机工作空间路径，换机器时需核对路径与依赖。
+
+## 硬件与运行模式
 
 | 设备 | 名称 / 通道 | 相机序列号 |
 | --- | --- | --- |
@@ -37,167 +35,168 @@ source ~/AgileX_ws/env.sh
 | 左组主从臂 | `can0` | — |
 | 右组主从臂 | `can1` | — |
 
-相机按 SDK 序列号绑定名称，默认 640×480、15 FPS，发布彩色图、深度图及对齐深度图。USB-CAN 重插后需确认左右接口映射。
+相机按序列号绑定名称，默认 640×480、15 FPS，发布彩色图、深度图及对齐深度图。USB-CAN 重插后需确认左右映射。
 
-## 启动与停止
+| 场景 | CAN / 硬件模式 | 入口 |
+| --- | --- | --- |
+| 演示采集、在线只推理检查 | LISTEN-ONLY / 默认 `record` | `record.sh`、`deploy.sh --dry-run` |
+| 模型控制、复位、实机轨迹回放 | 正常收发 / `mode:=deploy` | `deploy.sh --execute`、`reset.sh`、`replay.sh --execute` |
+| 数据转换、训练、离线推理、轨迹预览 | 无需连接硬件 | 转换脚本、训练脚本、`deploy.sh --offline`、`replay.sh --dry-run` |
 
-关闭占用相机的 RealSense Viewer 或其他驱动，然后准备 CAN 并启动硬件：
+切换模式前先停止录制或 SDK 控制程序，再停止硬件管理器。部署模式下两侧主臂须退出控制，静止不代表退出。完整启动选项、就绪状态和恢复采集步骤见[硬件说明](docs/hardware.md)。
+
+## 数据采集
+
+### 启动与检查
+
+关闭占用相机的 RealSense Viewer 或其他驱动。终端 1 准备 CAN 并启动硬件：
 
 ```bash
 ~/AgileX_ws/prepare_can.sh
 ~/AgileX_ws/start_hardware.sh
 ```
 
-`prepare_can.sh` 需要本机 sudo 权限，将 DOWN 接口设为 1 Mbps、LISTEN-ONLY、UP；配置已正确时跳过，正在以其他模式运行时拒绝切换。可指定单口：`~/AgileX_ws/prepare_can.sh can0`。
+`prepare_can.sh` 需要本机 sudo 权限，默认准备 1 Mbps、LISTEN-ONLY 接口；正在以其他模式运行时拒绝隐式切换。等待 `READY` 后再录制。采集模式下所选侧的主臂关节和夹爪目标须至少收到一次；尚未收到时为 `DEGRADED`。目标缓存保留原时间戳，不能证明主臂持续在线。
 
-常用启动选项：
-
-```bash
-# 仅三台相机
-~/AgileX_ws/start_hardware.sh arms:=none
-# 仅左臂相机
-~/AgileX_ws/start_hardware.sh arms:=none cameras:=cam_l
-# 仅两组机械臂
-~/AgileX_ws/start_hardware.sh cameras:=none
-# 仅右组机械臂
-~/AgileX_ws/start_hardware.sh arms:=right cameras:=none
-```
-
-`arms` 支持 `all`、`none`、`left`、`right` 或逗号列表；`cameras` 支持 `all`、`none` 或相机名称的逗号列表。`fps:=30` 可覆盖帧率，但需另行验证带宽与稳定性。
-
-- `READY`：所选设备的话题检查通过，终端输出话题、内容摘要和帧率。
-- `DEGRADED`：尚未收到主臂目标时，继续发布已有反馈和图像，但不允许录制。加 `require_leader_targets:=true` 可要求主臂目标在启动超时前就绪。
-- 启动失败、必需连续流中断或驱动退出：报告原因并关闭本管理器启动的驱动。
-
-每次启动后，两侧主臂关节和夹爪目标都需至少收到一次。静止时目标可能不再广播，节点保留最后值及原始时间戳；默认不因目标变旧报错，因此缓存不能证明主臂仍在线。超时策略见 `monitor.leader_target_timeout_sec`。
-
-停止时先结束录制，再在硬件启动终端按 **Ctrl+C**，或执行：
-
-```bash
-source ~/AgileX_ws/env.sh
-rosnode kill /agilex_hardware
-```
-
-停止 ROS 发布不等同于机械臂断电或急停。不要重复启动管理器。
-
-## 发布话题
-
-每台相机 **3 个话题**、每侧 Piper **8 个话题**，另有 2 个硬件状态话题，共 **27 个**。下表 `{cam}` 为 `cam_h/cam_l/cam_r`，`{side}` 为 `left/right`。
-
-| 话题 | 消息类型 | 内容 |
-| --- | --- | --- |
-| `/{cam}/color/image_raw` | `sensor_msgs/Image` | RGB 彩色图，rgb8 |
-| `/{cam}/depth/image_rect_raw` | `sensor_msgs/Image` | 原始深度，16UC1，mm，0 无效 |
-| `/{cam}/aligned_depth_to_color/image_raw` | `sensor_msgs/Image` | 重投影到彩色图像坐标的深度，16UC1，mm，0 无效 |
-| `/piper/{side}_bus/joint_states` | `sensor_msgs/JointState` | 从臂六关节实际角度，rad，顺序见 name |
-| `/piper/{side}_bus/leader_targets` | `sensor_msgs/JointState` | 六关节目标指令回显，rad |
-| `/piper/{side}_bus/gripper/actual_stamped` | `sensor_msgs/JointState` | 从臂夹爪实际开口，position[0]，m |
-| `/piper/{side}_bus/gripper/target_stamped` | `sensor_msgs/JointState` | 夹爪目标开口回显，m |
-| `/piper/{side}_bus/status` | `std_msgs/String`（JSON） | 控制模式、运动/示教状态、故障码和原始 CAN 数据 |
-| `/piper/{side}_bus/gripper/status` | `std_msgs/String`（JSON） | 夹爪开口、状态位、协议力字段和原始 CAN 数据 |
-| `/piper/{side}_bus/motor_feedback` | `hardware_bringup/MotorFeedback` | 六电机电流、轴位置/速度和力矩估算 |
-| `/piper/{side}_bus/events` | `std_msgs/String`（JSON） | 解码事件、原始 CAN 字节和各分片接收时间；不是全部 CAN 报文录制 |
-| `/agilex/hardware/status` | `std_msgs/String`（JSON） | 就绪状态、配置、标定、各话题有效性/年龄/帧率 |
-| `/agilex/hardware/diagnostics` | `diagnostic_msgs/DiagnosticArray` | ROS 诊断 |
-
-### 电机反馈与力矩
-
-`motor_feedback` 约 100 Hz，字段如下：
-
-| 字段 | 含义 |
-| --- | --- |
-| `header` | 六帧中最新的 CAN 主机接收时间戳 |
-| `joint_order` | 数组关节顺序 `[1, 2, 3, 4, 5, 6]` |
-| `current_a` | 六电机电流，A |
-| `motor_position_rad` | SDK 解码的电机轴位置，rad |
-| `motor_velocity_rad_s` | SDK 解码的电机轴速度，rad/s |
-| `torque_estimate_nm` | 六关节电流换算力矩，N·m；型号未知时为空 |
-
-标准 Piper 换算公式为 `torque = current × coefficient`：J1–3 系数 4.725，J4–6 系数 0.7787701152 N·m/A。型号、系数、原始报文和分片时间戳保存在同侧 `events` 中。
-
-**力矩是电流估算值，不是力矩传感器读数或外部接触力矩**，尚未做载荷标定，固件版本待核对。夹爪协议力字段同样未经标定。设备未安装末端六维力传感器，目前没有 `[Fx,Fy,Fz,Mx,My,Mz]` 反馈。
-
-### 时间戳与数据含义
-
-- 主臂话题是总线目标回显，不是主臂独立实测反馈。目标报文 ID 为 `0x155/156/157/159`，从臂关节与夹爪反馈为 `0x2A5/2A6/2A7/2A8`；CAN ID 不能区分发送同类指令的不同控制器。
-- 六关节角由三帧、六电机反馈由六帧组装；各帧必须更新且默认跨度不超过 50 ms。时间戳取最新分片的主机接收时间，不代表六轴严格同时采样。`joint_states.velocity/effort` 为空，轴速度和力矩见 `motor_feedback`。
-- 图像使用 SDK global/system 时间戳，对齐深度沿用原深度时间戳。深度对齐是同一相机内的空间对齐，三相机没有硬件同步。
-- 相机内参及深度到彩色的外参保存在 `/{cam}/calibration` 参数、硬件状态和录制 manifest 中；不发布 camera_info 或 TF。
-
-协议参考：[主从报文](https://github.com/agilexrobotics/piper_sdk/blob/master/assets/double_piper.MD)、[力矩系数](https://github.com/agilexrobotics/pyAgxArm/blob/master/docs/piper/firmware_reference.md)。查询固件可用官方 [Piper_sdk_ui](https://github.com/agilexrobotics/Piper_sdk_ui) 的 `hardware version`，记录 `S-V…` 软件版本；查询会发送 CAN 帧，需停止采集、独立连接待查机械臂并使用可发送的查询接口，完成后恢复 LISTEN-ONLY。
-
-## 查看图像与消息
-
-保持硬件运行，在另一终端执行：
+在另一终端查看图像：
 
 ```bash
 source ~/AgileX_ws/env.sh
 rosrun rqt_image_view rqt_image_view /cam_h/color/image_raw
 ```
 
-在下拉框选择其他相机或深度话题。不要同时用 RealSense Viewer 打开同一相机。
+通过下拉框切换相机或深度图。常用消息与帧率检查见[查看图像与消息](docs/hardware.md#查看图像与消息)。
+
+### 录制与停止
+
+终端 2，每次演示使用一个目录，统一采用 `insert_plug_v2/task_0001` 格式：
 
 ```bash
-rostopic list
-rostopic echo -n 1 /piper/left_bus/joint_states
-rostopic echo -n 1 /piper/left_bus/leader_targets
-rostopic echo -n 1 /piper/left_bus/gripper/actual_stamped
-rostopic echo -n 1 /piper/left_bus/status
-rostopic echo -n 1 /piper/left_bus/motor_feedback
-rostopic echo -n 1 /piper/left_bus/motor_feedback/torque_estimate_nm
-rostopic echo -n 1 /cam_h/depth/image_rect_raw/header
-rosparam get /cam_h/calibration
-rostopic echo -n 1 /agilex/hardware/diagnostics
-rostopic hz /cam_h/color/image_raw
+~/AgileX_ws/record.sh --output=~/AgileX_ws/bags/insert_plug_v2/task_0001
 ```
 
-可替换 `left/right` 和相机名称；`rostopic hz` 按 Ctrl+C 退出。图像建议查看消息头或用图形工具显示，避免打印完整像素数组。
-
-## 录制与回放
-
-终端 1 启动硬件并等待 `READY`。终端 2 指定完整文件名，执行后开始录制：
-
-```bash
-~/AgileX_ws/record.sh --output=~/AgileX_ws/bags/task_001.bag
-```
-
-看到 `Recording ...` 后开始演示；任务结束时在终端 2 按 **Ctrl+C**，等待 `complete` 和命令退出，完成文件保存。下一次修改文件名重新运行：
-
-```bash
-~/AgileX_ws/record.sh --output=~/AgileX_ws/bags/task_002.bag
-# 含空格的路径用引号包住
-~/AgileX_ws/record.sh --output="/home/robot/AgileX_ws/bags/pick cube/episode_003.bag"
-```
-
-`--output` 必填，文件名以 `.bag` 结尾，支持绝对路径、相对路径和 `~`。父目录自动创建；**同名 bag 会在硬件就绪、磁盘检查通过后自动覆盖**，对应 `.metadata` 中的清单和日志同步更新。采集不满意时，按 Ctrl+C 停止后再次运行同一条命令即可重录；需要保留上一段时请换文件名。已有 `.active` 文件时拒绝覆盖。一次运行录制一段，使用 LZ4 无损压缩，**不自动分包**。同一 ROS master 同时只允许一个本包录制进程。
-
-输出示例：
+看到 `Recording ...` 后开始演示。结束时在录制终端按 **Ctrl+C**，等待 `complete` 和命令退出。下一段使用 `task_0002`，依次递增。
 
 ```text
-bags/
-├── task_001.bag
-└── task_001.bag.metadata/
-    ├── manifest.json    # 设备、配置、标定、起止时间、话题数量与录制结果
-    └── rosbag.log       # 底层录制日志
+bags/insert_plug_v2/task_0001/
+├── data.bag          # 原始 ROS 数据，默认 LZ4 无损压缩
+├── manifest.json     # 设备、配置、标定和录制检查结果
+└── rosbag.log        # 底层录制日志
 ```
 
-默认要求两组机械臂及三台相机全部就绪；未就绪时最多等待 120 秒，超时退出。若硬件只启动了部分设备，追加 `--allow-partial`，所选设备仍须就绪：
+**同一目录再次录制会在硬件与磁盘检查通过后覆盖其中的 bag、清单和日志。** 要保留上一段，请换目录；存在 `data.bag.active` 时拒绝覆盖。默认要求双臂和三相机全部就绪，并保留至少 5 GiB 磁盘空间。
+
+`complete` 表示录制文件通过完整性检查，不保证没有丢帧或时序误差。部分设备采集、失败处理及完整判定见[录制说明](src/data_collection/README.md#录制-rosbag)。
+
+先停止录制，再在硬件终端按 **Ctrl+C**。停止 ROS 发布不等同于机械臂断电或急停。离线检查和 `rosbag play` 见[bag 消息回放](src/data_collection/README.md#查看与回放-bag-消息)；控制实机重复动作见下文[实机轨迹回放](#实机轨迹回放)。
+
+## 数据转换与 ACT 训练
+
+### 转换 LeRobot 数据集
+
+转换无需启动硬件。默认转换 YAML 仍匹配旧的 `bags/task_*`；先按[批次配置说明](src/data_collection/README.md#为采集批次设置输入与输出)，把输入改为 `bags/insert_plug_v2/task_*/data.bag`，并设置输出 `datasets/piper_insert_plug_v2`、标识 `local/piper_insert_plug_v2`。
 
 ```bash
-~/AgileX_ws/record.sh --output=~/AgileX_ws/bags/cameras_001.bag --allow-partial
+# 先扫描话题、字段和时间同步
+~/AgileX_ws/src/data_collection/scripts/convert_lerobot.sh --dry-run
+# 检查通过后生成数据集，输出目录必须不存在
+~/AgileX_ws/src/data_collection/scripts/convert_lerobot.sh
 ```
 
-默认至少保留 5 GiB 磁盘空间。硬件异常、心跳过期、配置变化、磁盘不足或录制进程退出会结束录制并标为 `incomplete`。`complete` 表示 bag 可读、必需话题有消息、无遗留 `.active` 且未检测到缓冲溢出，不保证无任何丢帧或时序误差。先停止录制，再关闭硬件。
+默认导出 15 FPS、三路 RGB、14 维从臂状态和主臂目标回显动作，并额外保存电流、估算力矩等反馈；深度默认关闭。成功后生成 LeRobot 数据及 `meta/conversion_report.json`。字段顺序、同步与溯源规则见[采集包文档](src/data_collection/README.md)。
 
-消息保留原始 header，bag 时间为录制端接收时间；静止主臂目标保留最后值及原时间戳。不做插值、重采样、跨设备同步或训练格式转换。
+### 训练与选择检查点
+
+训练不需要 ROS 或机械臂。完成上述 v2 转换后，以基线配置启动一次新的训练，显式指定该数据集及新的输出目录：
 
 ```bash
-source ~/AgileX_ws/env.sh
-rosbag info ~/AgileX_ws/bags/task_001.bag
-# 先停止在线硬件，再回放，避免同名话题混流
-rosbag play ~/AgileX_ws/bags/task_001.bag
+~/AgileX_ws/training/train_act.sh \
+  --config_path="$HOME/AgileX_ws/training/act.yaml" \
+  --dataset.repo_id=local/piper_insert_plug_v2 \
+  --dataset.root="$HOME/AgileX_ws/datasets/piper_insert_plug_v2" \
+  --output_dir="$HOME/AgileX_ws/outputs/act_insert_plug_v2_new_run"
 ```
 
-## 验证记录
+运行前确认原任务已退出、输出目录未被使用，并核对配置中的划分比例、batch 和步数。脚本要求 CUDA 可用，训练结束输出 `End of training`，检查点位于输出目录的 `checkpoints/`。
 
-双组机械臂和三相机已完成约 20 秒实机录制，27 个预期话题均有数据，并通过逐条读取检查。结果见 [test.validation.json](bags/test.validation.json)，原始文件为 `bags/test.bag`。这属于短时功能验证，长期稳定性和训练数据时序仍需单独评估。其他测试记录见 [docs/validation.md](docs/validation.md)。
+训练输入为三路 RGB＋14 维从臂状态；数据集中的深度、电流和估算力矩不自动参与模型输入。恢复训练、已有 v3 实验及日志见[训练文档](training/README.md)。部署前在[部署配置](src/model_deploy/config/act.yaml)中显式选择 `checkpoint`，同时保留模型及归一化处理器；`last` 仅表示最新检查点。
+
+## 模型部署与实机操作
+
+### 只推理检查与正式部署
+
+保持采集模式硬件运行，在第二终端检查实时推理：
+
+```bash
+~/AgileX_ws/deploy.sh --dry-run --duration=10
+```
+
+该命令不创建 SDK 控制器、不发送使能或动作。检查推理日志与预测结果后，正式控制前让主臂退出控制，准备好从臂与物体的初始状态，停止旧硬件及其他控制进程。终端 1 切换模式并启动反馈：
+
+```bash
+~/AgileX_ws/prepare_can.sh --mode=deploy
+~/AgileX_ws/start_hardware.sh mode:=deploy
+```
+
+终端 2：
+
+```bash
+~/AgileX_ws/deploy.sh --probe-firmware
+~/AgileX_ws/deploy.sh --execute
+```
+
+固件查询会发送 CAN 请求，但不使能或移动。`--execute` 检查通过后等待回车，默认最多运行 60 秒。**Ctrl+C 请求保持实测姿态及夹爪开口**，不回零、不松爪；反馈失效时改为请求阻尼停止。实际停止效果需要实机验证。
+
+每次运行结果保存在 `logs/deploy/<时间>/`。配置、输出话题、停止限制及恢复采集见[部署文档](src/model_deploy/README.md)。
+
+### 固定姿态复位
+
+模型退出后，保持部署模式硬件发布运行：
+
+```bash
+~/AgileX_ws/reset.sh --dry-run
+~/AgileX_ws/reset.sh
+```
+
+默认顺序：开爪至 100 mm → 沿关节路径抬高法兰 10 cm → 回到固定姿态 → 到位后闭合。**开爪会释放夹持物，路径需要预留空间。** `--dry-run` 只打印要求，不检查实机可达性；正式规划失败不会继续运动。Ctrl+C 使用部署程序的停止处理。
+
+固定姿态由 `act.yaml` 的 `reset.home_joints_rad` 设置，不随每次部署改变。抬升、路径限制及日志见[复位说明](src/model_deploy/README.md#复位到固定姿态)。
+
+### 实机轨迹回放
+
+读取 bag 中左右从臂的实测关节和夹爪轨迹，通过 SDK 控制双臂。先离线预览整段轨迹与起点：
+
+```bash
+~/AgileX_ws/replay.sh ~/AgileX_ws/bags/insert_plug_v2/task_0001 --dry-run
+```
+
+让主臂退出控制，停止旧硬件、其他控制程序及 `rosbag play`，手动将双从臂放到预览起点并准备物体。终端 1：
+
+```bash
+~/AgileX_ws/prepare_can.sh --mode=deploy
+~/AgileX_ws/start_hardware.sh mode:=deploy cameras:=none
+```
+
+终端 2：
+
+```bash
+~/AgileX_ws/replay.sh ~/AgileX_ws/bags/insert_plug_v2/task_0001 --execute
+```
+
+默认半速，检查通过后按回车开始。完成或 Ctrl+C 时请求保持实测姿态和夹爪开口，不自动复位。日志位于 `logs/replay/<时间>/`。回放不具备避障或环境感知能力，跟随等待可能延长总耗时。
+
+自动移动到起点的 `--move-to-start`、倍率和反馈检查见[完整回放说明](src/model_deploy/README.md#从-bag-回放实机轨迹)。
+
+## 配置与详细文档
+
+| 模块 | 配置入口 | 详细说明 |
+| --- | --- | --- |
+| `hardware_bringup`：设备、相机、健康检查 | [hardware.yaml](src/hardware_bringup/config/hardware.yaml) | [硬件启动与运行模式](docs/hardware.md)、[话题与数据语义](docs/topics.md) |
+| `data_collection`：录制与数据转换 | [recording.yaml](src/data_collection/config/recording.yaml)、[lerobot_conversion.yaml](src/data_collection/config/lerobot_conversion.yaml) | [采集包 README](src/data_collection/README.md) |
+| `training`：ACT 训练与恢复 | [训练 act.yaml](training/act.yaml) | [训练 README](training/README.md) |
+| `model_deploy`：模型控制、复位、轨迹回放 | [部署 act.yaml](src/model_deploy/config/act.yaml)、[replay.yaml](src/model_deploy/config/replay.yaml) | [部署包 README](src/model_deploy/README.md) |
+| 本地 LeRobot fork | `third_party/lerobot/` | [仓库维护说明](third_party/README.md) |
+
+`bags/` 保存录制数据，`datasets/` 保存转换数据，`outputs/` 保存训练结果，`logs/` 保存运行与测试日志。具体路径以对应 YAML 或命令行参数为准。
+
+双臂与三相机已完成短时录制验证；历史测试、固件查询和部署验证范围统一见[验证记录](docs/validation.md)。短时验证不代表长期稳定性、实机停止效果或插接成功率已验收。

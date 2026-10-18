@@ -1,8 +1,26 @@
 # 工作空间验证记录
 
-日期：2026-10-14（Asia/Shanghai）。
+[返回工作空间 README](../README_zh.md)
 
-## 最新增量：结构化 MotorFeedback
+本页集中保存历史验证结果，按记录时的代码、配置和设备条件理解。软件测试、短时录包和固件查询分别说明各自验证范围，不等同于实机运动、停止效果或任务成功率验收。
+
+## 完整采集录包摘要
+
+双组机械臂和三相机曾完成约 20 秒实机录制，27 个预期话题均有数据，并通过逐条读取检查。原记录引用的结果文件为 `bags/test.validation.json`，原始文件为 `bags/test.bag`；当前工作空间未找到这两个文件，此处保留历史路径供追溯。这属于短时功能验证，长期稳定性和训练数据时序仍需单独评估。
+
+## ACT 部署、固件查询与复位（2026-10-16）
+
+2026-10-16 验证记录：14 项部署单元测试、14 项硬件测试、10 项录包测试通过；私有 ROS master 的四类集成测试通过。4090 离线推理中位数约 8 ms。真实三相机和双臂话题下 dry-run 10 秒完成 150 次推理，进程通信加推理往返 P95 约 22 ms，全程 CAN 保持只接收。当时实机摆放触发目标偏差检查（例如右侧 J6 预测与实测偏差约 0.76 rad、右夹爪约 100 mm）；需准备训练时的起始姿态和场景后重新检查，不能通过放宽阈值来代替定位。未执行 SDK 使能/动作或实机保持测试。
+
+固件查询补充（2026-10-16）：两侧实机均读到 `S-V1.9-0`，SDK 自动选择 `v189`，已写入 `expected_firmware`。连接后先等待新鲜 SDK 关节反馈及接收频率稳定，再查询固件；无完整响应最多尝试 3 次。此处理避免刚连接时 SDK 接收频率为零导致响应被清空的时序风险，失败仍禁止使能和运动。新增回归测试后部署单元测试共 17 项通过。本次仅验证查询，不代表运动/保持已实机验收。
+
+复位补充（2026-10-16）：新增 10 项模拟测试，覆盖反馈确认的动作顺序、受阻超时、取消、数据失效、起始快照保存和控制互斥。当时部署/复位 30 项、硬件 14 项、录包 10 项测试及 catkin 编译通过；旧日志回位计划已用 `--dry-run` 检查，尚未执行实机复位。
+
+## 硬件与录包验证背景（2026-10-14）
+
+以下硬件与录包记录日期为 2026-10-14（Asia/Shanghai）；其中“当前”均指该次记录时的版本。
+
+### 结构化 MotorFeedback
 
 `/piper/{side}_bus/motor_feedback` 改用 `hardware_bringup/MotorFeedback`，保留 header、
 joint_order、current_a、motor_position_rad、motor_velocity_rad_s、torque_estimate_nm。
@@ -19,7 +37,7 @@ joint_order、current_a、motor_position_rad、motor_velocity_rad_s、torque_est
 `logs/structured_motor_ros_validation.json`、`logs/structured_motor_recording.log`、
 `logs/structured_motor_bag_readback.json`。旧 bag 保持旧 String 类型，不自动改写。
 
-## 当前增量：主臂跟随观测与六关节力矩估计
+### 主臂跟随观测与六关节力矩估计
 
 用户确认：左右均为标准 Piper，固件版本未知，末端没有六维力传感器，电脑接在主从
 互连总线上，手动操作左主臂时左从臂可跟随。
@@ -51,7 +69,7 @@ joint_order、current_a、motor_position_rad、motor_velocity_rad_s、torque_est
 `logs/piper_torque_recording_integration.log`、`logs/piper_torque_live.log`、
 `logs/piper_torque_final_status.json`。
 
-## 当前版本：每台相机仅三个话题
+### 每台相机仅三个话题
 
 20:38 后切换到 `hardware_bringup/realsense_images`，直接使用当前 ROS 环境的
 librealsense2 2.50.0（与此前官方 ROS 驱动使用的版本相同）。
@@ -74,7 +92,7 @@ librealsense2 2.50.0（与此前官方 ROS 驱动使用的版本相同）。
 `logs/three_topic_recording_integration.log`。
 以下包含精简前的历史验证，涉及 camera_info 的数量以当时版本为准。
 
-## 已完成
+### 早期已完成项目
 
 - 三个 Catkin 包编译通过，使用系统 Python 3.8 和 ROS Noetic。
 - 单元测试覆盖相机序列号/命名绑定、CAN 模式检查、完整关节分片组装、单位、
@@ -88,7 +106,7 @@ librealsense2 2.50.0（与此前官方 ROS 驱动使用的版本相同）。
   必需 30 个话题都有记录；静止的主臂目标以原始时间戳写入 bag；
   注入硬件故障后录制自动停止并标为 incomplete。
 
-## 接线修复与包改名后的实机复测
+### 接线修复与包改名后的实机复测
 
 早期左 can0 无报文；用户修复断线并重新启用后，两接口均为 1 Mbps、UP、LISTEN-ONLY。
 20:15 的 10 秒采样：左 24,227 帧、右 24,218 帧，均无新增接收错误或丢包；
@@ -110,7 +128,7 @@ librealsense2 2.50.0（与此前官方 ROS 驱动使用的版本相同）。
 
 全程未发送运动、使能、回零或夹爪指令，也未补齐或伪造缺失目标。
 
-## 原始记录
+### 原始记录
 
 - `logs/build.log`、`logs/unit_tests.log`
 - `logs/can_probe.json`
@@ -123,11 +141,11 @@ librealsense2 2.50.0（与此前官方 ROS 驱动使用的版本相同）。
 - `logs/package_rename_build.log`、`logs/package_rename_tests.log`
 - `logs/hardware_renamed_live.log`、`logs/hardware_renamed_ros_validation.json`
 
-真实测试 bag 与模拟测试 bag 分目录保存，均不放入用户正式采集目录 `bags/`。
+上述早期测试的真实 bag 与模拟 bag 分目录保存，均未放入用户正式采集目录。完整采集录包摘要所引用的历史文件路径另见上文。
 
-## 限制
+### 验证范围与限制
 
 相机启动阶段曾出现 USB control_transfer、Depth stream start failure 和 Left MIPI error 通知，
 后续数据流恢复并通过上述检查。管理器以实际有效数据判断就绪；这些 SDK 通知仍保留于日志。
 短时测试不保证长期运行、所有 USB 连接方式或更高分辨率/帧率稳定。
-未做绝对深度精度、跨相机硬件同步、相机与机械臂外参标定、力矩测量验证或模型部署。
+该日未做绝对深度精度、跨相机硬件同步、相机与机械臂外参标定、力矩测量验证或模型部署。后续部署测试另见本页 2026-10-16 记录。

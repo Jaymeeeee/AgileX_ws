@@ -32,30 +32,31 @@ def ready_error(status, last_received, timeout, required_arms, required_cameras,
 
 
 def output_error(path):
-    """Allow replacement of regular completed files, never active files or links."""
-    if os.path.lexists(str(path)+'.active'):
+    """Validate a recording directory without modifying its contents."""
+    if path.suffix=='.bag':
+        return '--output must name a directory, not a .bag file: '+str(path)
+    if path.is_symlink() or (path.exists() and not path.is_dir()):
+        return 'Output must be a directory, not a file or symlink: '+str(path)
+    if os.path.lexists(path/'data.bag.active'):
         return 'Recording .active file exists; stop/recover that recording first: '+str(path)
-    if path.is_symlink() or (path.exists() and not path.is_file()):
-        return 'Output must be a regular file, not a directory or symlink: '+str(path)
-    metadata=Path(str(path)+'.metadata')
-    if metadata.is_symlink() or (metadata.exists() and not metadata.is_dir()):
-        return 'Invalid metadata directory: '+str(metadata)
-    for name in ('manifest.json','manifest.json.tmp','rosbag.log'):
-        item=metadata/name
+    for name in ('data.bag','manifest.json','manifest.json.tmp','rosbag.log'):
+        item=path/name
         if item.is_symlink() or (item.exists() and not item.is_file()):
-            return 'Invalid metadata file: '+str(item)
+            return 'Invalid recording file: '+str(item)
     return ''
 
 
 class Recorder:
-    def __init__(self, output_file=None):
+    def __init__(self, output_directory=None):
         self.guard=threading.RLock()
         self.hardware=None;self.last_received=0
         self.proc=None;self.session=None;self.manifest=None;self.log=None
-        self.output_file=Path(output_file).expanduser().absolute() if output_file else None
-        if self.output_file and self.output_file.suffix!='.bag':
-            raise ValueError('--output must name a .bag file')
-        self.root=self.output_file.parent if self.output_file else Path(rospy.get_param('~output_dir')).expanduser()
+        self.output_directory=Path(output_directory).expanduser().absolute() if output_directory else None
+        if self.output_directory:
+            error=output_error(self.output_directory)
+            if error:raise ValueError(error)
+        self.output_file=self.output_directory/'data.bag' if self.output_directory else None
+        self.root=self.output_directory if self.output_directory else Path(rospy.get_param('~output_dir')).expanduser()
         self.minimum=float(rospy.get_param('~min_free_gb',5))*1024**3
         self.timeout=float(rospy.get_param('~status_timeout_sec',3))
         self.allow_partial=bool(rospy.get_param('~allow_partial',False))
@@ -100,13 +101,13 @@ class Recorder:
             if self.proc is not None:return TriggerResponse(False,'Already recording')
             error=self.reason()
             if error:return TriggerResponse(False,error)
+            if self.output_directory:
+                error=output_error(self.output_directory)
+                if error:return TriggerResponse(False,error)
             self.root.mkdir(parents=True,exist_ok=True)
             if shutil.disk_usage(self.root).free<self.minimum:return TriggerResponse(False,'Insufficient free disk space')
             if self.output_file:
-                error=output_error(self.output_file)
-                if error:return TriggerResponse(False,error)
-                self.session=Path(str(self.output_file)+'.metadata')
-                self.session.mkdir(exist_ok=True)
+                self.session=self.output_directory
                 if self.output_file.exists():
                     rospy.logwarn('Overwriting previous recording: %s',self.output_file)
                     self.output_file.unlink()
@@ -211,12 +212,12 @@ if __name__=='__main__':
     args=rospy.myargv()[1:]
     options=None
     if args:
-        parser=argparse.ArgumentParser(description='Record to an explicit .bag file; Ctrl+C stops and saves.')
-        parser.add_argument('--output',required=True,help='Output .bag path; previous recording is overwritten after readiness checks')
+        parser=argparse.ArgumentParser(description='Record data.bag, manifest.json and rosbag.log in one directory; Ctrl+C stops and saves.')
+        parser.add_argument('--output',required=True,help='Recording directory; previous recording is overwritten after readiness checks')
         parser.add_argument('--allow-partial',action='store_true',help='Allow a ready subset of hardware')
         options=parser.parse_args(args)
+        if not options.output.strip():parser.error('--output must name a directory')
         output=Path(options.output).expanduser().absolute()
-        if output.suffix!='.bag':parser.error('--output must name a .bag file')
         error=output_error(output)
         if error:parser.error(error)
     # One recorder per ROS master. Hold the lock until bag finalization completes.

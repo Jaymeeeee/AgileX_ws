@@ -107,27 +107,28 @@ def main():
         second=wait_state('recording');time.sleep(2);fault.set()
         failure=wait_state('incomplete')
         assert 'synthetic injected fault' in failure['reason']
-        # The public CLI writes the requested filename, including paths with spaces,
+        # The public CLI writes a recording directory, including paths with spaces,
         # and finalizes it when Ctrl+C is sent to its foreground process group.
         os.killpg(rec.pid,signal.SIGINT);rec.wait(timeout=30)
         fault.clear()
         explicit_dir=Path(tempfile.mkdtemp(prefix='explicit output ',dir=str(OUT)))
-        target=explicit_dir/'episode 001.bag'
+        target=explicit_dir/'episode 001'
+        bag_path=target/'data.bag'
         def launch_explicit(target):
             handle=(explicit_dir/(target.stem+'.console.log')).open('w');files.append(handle)
             proc=subprocess.Popen([str(ROOT/'record.sh'),'--output='+str(target)],
                 stdout=handle,stderr=subprocess.STDOUT,start_new_session=True)
             processes.append(proc)
-            metadata=Path(str(target)+'.metadata')/'manifest.json'
+            metadata=target/'manifest.json'
             deadline=time.monotonic()+25
             while time.monotonic()<deadline:
                 if proc.poll() is not None:raise RuntimeError('Explicit recorder exited early')
-                if metadata.exists() and Path(str(target)+'.active').exists():return proc,metadata
+                if metadata.exists() and (target/'data.bag.active').exists():return proc,metadata
                 time.sleep(.1)
             raise RuntimeError('Explicit recorder did not start')
         direct,meta=launch_explicit(target)
         # A second process must fail rather than replacing the existing ROS node.
-        duplicate=subprocess.run([str(ROOT/'record.sh'),'--output='+str(explicit_dir/'concurrent.bag')],
+        duplicate=subprocess.run([str(ROOT/'record.sh'),'--output='+str(explicit_dir/'concurrent')],
             stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=10)
         assert duplicate.returncode!=0,duplicate.stdout
         assert 'Another AgileX recorder' in duplicate.stdout,duplicate.stdout
@@ -136,13 +137,15 @@ def main():
         assert direct.wait(timeout=30)==0
         saved=json.loads(meta.read_text())
         assert saved['state']=='complete',saved
-        assert target.exists() and not Path(str(target)+'.active').exists()
-        assert not list(explicit_dir.glob('episode 001_*.bag'))
-        with rosbag.Bag(str(target)) as bag:
+        assert bag_path.exists() and not (target/'data.bag.active').exists()
+        assert {p.name for p in target.iterdir()}=={'data.bag','manifest.json','rosbag.log'}
+        assert not list(target.glob('data_*.bag'))
+        with rosbag.Bag(str(bag_path)) as bag:
             counts={}
             for topic,msg,stamp in bag.read_messages():counts[topic]=counts.get(topic,0)+1
         assert all(counts.get(s['topic'],0)>0 for s in specs)
-        original=(target.stat().st_size,target.stat().st_mtime_ns)
+        original=(bag_path.stat().st_size,bag_path.stat().st_mtime_ns)
+        note=target/'notes.txt';note.write_text('Keep this unrelated file')
         # Waiting for READY must preserve the old bag and metadata.
         fault.set();time.sleep(.3)
         waiting_log=(explicit_dir/'waiting.log').open('w');files.append(waiting_log)
@@ -150,7 +153,7 @@ def main():
             stdout=waiting_log,stderr=subprocess.STDOUT,start_new_session=True)
         processes.append(waiting);time.sleep(2)
         assert waiting.poll() is None
-        assert original==(target.stat().st_size,target.stat().st_mtime_ns)
+        assert original==(bag_path.stat().st_size,bag_path.stat().st_mtime_ns)
         assert json.loads(meta.read_text())==saved
         os.killpg(waiting.pid,signal.SIGINT);waiting.wait(timeout=15)
         fault.clear();time.sleep(.3)
@@ -159,12 +162,13 @@ def main():
         assert overwrite.wait(timeout=30)==0
         replaced=json.loads(meta.read_text())
         assert replaced['state']=='complete' and replaced['started_at']>saved['stopped_at']
-        assert target.stat().st_mtime_ns!=original[1]
-        with rosbag.Bag(str(target)) as bag:
+        assert bag_path.stat().st_mtime_ns!=original[1]
+        assert note.read_text()=='Keep this unrelated file'
+        with rosbag.Bag(str(bag_path)) as bag:
             assert bag.get_start_time()>saved['stopped_at']
             assert sum(1 for _ in bag.read_messages())>0
-        # New filename supports the next episode; runtime faults still stop recording.
-        second_target=explicit_dir/'episode 002.bag'
+        # New directory supports the next episode; runtime faults still stop recording.
+        second_target=explicit_dir/'episode 002'
         direct2,meta2=launch_explicit(second_target)
         time.sleep(2);fault.set()
         assert direct2.wait(timeout=30)!=0
@@ -172,7 +176,7 @@ def main():
         assert failed['state']=='incomplete' and 'synthetic injected fault' in failed['reason'],failed
         result=dict(passed=True,synthetic=True,full_topic_recording=first['session'],
                     topic_count=len(specs),fault_interruption=second['session'],
-                    explicit_output=str(target),ctrl_c_finalized=True,overwrite_verified=True,
+                    explicit_output_directory=str(target),ctrl_c_finalized=True,unrelated_file_preserved=True,overwrite_verified=True,
                     previous_file_preserved_while_not_ready=True,
                     concurrent_recorder_refused=True,explicit_fault_stopped=True)
         (OUT/'result.json').write_text(json.dumps(result,indent=2)+'\n')

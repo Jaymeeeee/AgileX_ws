@@ -95,14 +95,18 @@ def camera_command(cfg, name):
     return ['roslaunch', 'hardware_bringup', 'camera.launch'] + [k+':='+value(v) for k,v in args.items()]
 
 
-def check_can(channel, bitrate):
+def check_can(channel, bitrate, mode='record'):
+    if mode not in ('record', 'deploy'):
+        raise ValueError('mode must be record or deploy')
     output = subprocess.check_output(['ip', '-details', 'link', 'show', channel],
                                      stderr=subprocess.STDOUT, text=True, timeout=3)
     flags = re.search(r'<([^>]+)>', output.splitlines()[0])
     if not flags or 'UP' not in flags.group(1).split(','):
         raise RuntimeError(channel + ' is DOWN; run prepare_can.sh in a local terminal')
-    if 'LISTEN-ONLY' not in output.upper():
+    if mode == 'record' and 'LISTEN-ONLY' not in output.upper():
         raise RuntimeError(channel + ' must be LISTEN-ONLY for receive-only acquisition')
+    if mode == 'deploy' and 'LISTEN-ONLY' in output.upper():
+        raise RuntimeError(channel + ' is LISTEN-ONLY; stop hardware and run prepare_can.sh --mode=deploy')
     if not re.search(r'\bbitrate\s+{}\b'.format(int(bitrate)), output):
         raise RuntimeError(channel + ' bitrate mismatch')
     if 'BUS-OFF' in output or 'ERROR-PASSIVE' in output:
