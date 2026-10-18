@@ -1,8 +1,8 @@
 # 硬件启动与运行模式
 
-[返回工作空间 README](../README_zh.md) · [话题与数据语义](topics.md)
+[返回工作空间 README](../README.md) · [话题与数据语义](topics.md)
 
-设备映射见[硬件与运行模式](../README_zh.md#硬件与运行模式)，具体参数以 [hardware.yaml](../src/hardware_bringup/config/hardware.yaml) 为准。相机按序列号绑定名称；USB-CAN 重插后需确认左右接口映射。
+设备映射见[硬件与运行模式](../README.md#硬件与运行模式)，具体参数以 [hardware.yaml](../src/hardware_bringup/config/hardware.yaml) 为准。相机按序列号绑定名称；USB-CAN 重插后需确认左右接口映射。
 
 ## 采集模式启动与停止
 

@@ -1,6 +1,6 @@
 # data_collection：录制、检查与数据转换
 
-[返回工作空间 README](../../README_zh.md) · [硬件启动](../../docs/hardware.md) · [ACT 训练](../../training/README.md)
+[返回工作空间 README](../../README.md) · [硬件启动](../../docs/hardware.md) · [ACT 训练](../../training/README.md)
 
 硬件录制用 ROS Noetic / 系统 Python；离线转换用独立的 LeRobot Python >= 3.12 环境。本文通用采集目录采用 `bags/insert_plug_v2/task_0001`，每次演示一个目录，后续依次使用 `task_0002`、`task_0003`。
 

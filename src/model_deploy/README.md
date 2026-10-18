@@ -1,6 +1,6 @@
 # model_deploy：双臂 ACT 部署与轨迹回放
 
-[返回工作空间 README](../../README_zh.md) · [硬件模式切换](../../docs/hardware.md#切换部署模式与恢复采集) · [训练与检查点](../../training/README.md)
+[返回工作空间 README](../../README.md) · [硬件模式切换](../../docs/hardware.md#切换部署模式与恢复采集) · [训练与检查点](../../training/README.md)
 
 `start_hardware.sh` 发布相机/机械臂实际反馈；`deploy.sh` 订阅 ROS，调用现有 LeRobot ACT，经过动作检查后用 pyAgxArm SDK 控制左右从臂和夹爪。ROS 使用系统 Python 3.8，GPU 推理使用 `lerobot` Python 3.12，两者由脚本自动管理。
 

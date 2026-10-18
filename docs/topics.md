@@ -1,6 +1,6 @@
 # 话题与数据语义
 
-[返回工作空间 README](../README_zh.md) · [硬件启动与消息查看](hardware.md#查看图像与消息)
+[返回工作空间 README](../README.md) · [硬件启动与消息查看](hardware.md#查看图像与消息)
 
 ## 采集模式话题
 

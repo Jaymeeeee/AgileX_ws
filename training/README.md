@@ -1,6 +1,6 @@
 # ACT 本地训练
 
-[返回工作空间 README](../README_zh.md) · [数据转换](../src/data_collection/README.md#bag--lerobot) · [模型部署](../src/model_deploy/README.md)
+[返回工作空间 README](../README.md) · [数据转换](../src/data_collection/README.md#bag--lerobot) · [模型部署](../src/model_deploy/README.md)
 
 ## 开始训练
 
