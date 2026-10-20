@@ -8,7 +8,19 @@ import sys
 import time
 import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
-from model_deploy.core import CAMERAS, ActionGuard, load_config, recv_packet, send_packet
+from model_deploy.core import CAMERAS, selected_sides, ActionGuard, load_config, recv_packet, send_packet
+
+
+def validate_checkpoint_contract(cfg, policy_config) -> int:
+    dimension = 7*len(selected_sides(cfg))
+    expected = {'observation.state': [dimension], **{
+        'observation.images.' + k: [3, 480, 640] for k in CAMERAS}}
+    if policy_config.type != 'act' or {k: list(v.shape) for k, v in policy_config.input_features.items()} != expected:
+        raise ValueError('Checkpoint input contract does not match selected arms {} ({}D state, three RGB cameras); '
+                         'use matching single/dual-arm weights, no automatic slicing'.format(selected_sides(cfg), dimension))
+    if list(policy_config.output_features['action'].shape) != [dimension]:
+        raise ValueError('Checkpoint action must be absolute {}D Piper targets for {}'.format(dimension, selected_sides(cfg)))
+    return dimension
 
 
 class Inference:
@@ -24,12 +36,7 @@ class Inference:
             raise RuntimeError('CUDA unavailable; no silent CPU fallback')
         path = cfg['checkpoint']
         pc = PreTrainedConfig.from_pretrained(path, local_files_only=True)
-        expected = {'observation.state': [14], **{
-            'observation.images.' + k: [3, 480, 640] for k in CAMERAS}}
-        if pc.type != 'act' or {k: list(v.shape) for k, v in pc.input_features.items()} != expected:
-            raise ValueError('Checkpoint input contract does not match deployment')
-        if list(pc.output_features['action'].shape) != [14]:
-            raise ValueError('Checkpoint action must be absolute 14D Piper targets')
+        self.dimension = validate_checkpoint_contract(cfg, pc)
         pc.device = cfg['policy']['device']
         pc.pretrained_backbone_weights = None  # full trained weights below; no downloads
         pc.n_action_steps = 1
@@ -40,7 +47,7 @@ class Inference:
             pc, pretrained_path=path,
             preprocessor_overrides={'device_processor': {'device': pc.device}},
             postprocessor_overrides={'device_processor': {'device': 'cpu'}})
-        dummy = {'state': np.zeros(14, np.float32), **{
+        dummy = {'state': np.zeros(self.dimension, np.float32), **{
             k: np.zeros((480, 640, 3), np.uint8) for k in CAMERAS}}
         for _ in range(3):
             self.run(dummy)
@@ -49,7 +56,7 @@ class Inference:
     def run(self, packet):
         torch = self.torch
         state = np.asarray(packet['state'])
-        if state.shape != (14,) or not np.isfinite(state).all():
+        if state.shape != (self.dimension,) or not np.isfinite(state).all():
             raise ValueError('Invalid observation.state')
         obs = {'observation.state': torch.from_numpy(state.astype(np.float32))}
         for k in CAMERAS:
@@ -61,7 +68,7 @@ class Inference:
         with torch.inference_mode():
             action = self.post(self.policy.select_action(self.pre(obs)))
         result = action.detach().cpu().numpy().reshape(-1)
-        if result.shape != (14,) or not np.isfinite(result).all():
+        if result.shape != (self.dimension,) or not np.isfinite(result).all():
             raise ValueError('Invalid model output')
         return result, time.monotonic()-start
 
@@ -74,7 +81,7 @@ def offline(engine, root, count, fixture):
         raise ValueError('Offline dataset FPS mismatch')
     ds = LeRobotDataset('local/piper_insert_plug', root=root, video_backend='torchcodec')
     times, errors, ranges = [], [], []
-    guard = ActionGuard(engine.cfg['control'], 1/15)
+    guard = ActionGuard(engine.cfg['control'], 1/15, selected_sides(engine.cfg))
     engine.policy.reset()
     for i in range(min(count, len(ds))):
         sample = ds[i]
@@ -105,8 +112,10 @@ def main():
     p.add_argument('--offline')
     p.add_argument('--frames', type=int, default=30)
     p.add_argument('--fixture', help='Save first offline observation for ROS transport testing')
+    p.add_argument('--arms', choices=('both', 'left', 'right'))
+    p.add_argument('--checkpoint')
     args = p.parse_args()
-    cfg = load_config(args.config)
+    cfg = load_config(args.config, arms=args.arms, checkpoint=args.checkpoint)
     engine = Inference(cfg)
     if args.offline:
         if args.frames < 1:

@@ -3,7 +3,7 @@ set -e
 load_ros_environment() { source /home/robot/AgileX_ws/env.sh; }
 load_ros_environment
 case "${1:-}" in
-  --output|--output=*|--help|-h)
+  --output|--output=*|--arms|--arms=*|--help|-h)
     exec rosrun data_collection bag_recorder.py "$@"
     ;;
   start|stop)
@@ -18,7 +18,7 @@ case "${1:-}" in
     exec roslaunch data_collection record.launch auto_start:=true "$@"
     ;;
   *)
-    echo 'Usage: record.sh --output=/absolute/path/episode_directory [--allow-partial]' >&2
+    echo 'Usage: record.sh --output=/absolute/path/episode_directory [--arms both|left|right] [--allow-partial]' >&2
     echo 'Press Ctrl+C to save data.bag, manifest.json and rosbag.log. Reusing the directory overwrites the previous recording.' >&2
     exit 2
     ;;

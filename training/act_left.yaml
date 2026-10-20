@@ -1,0 +1,43 @@
+# Single left arm ACT baseline (7D), three cameras; train_act.sh --config_path=training/act_left.yaml.
+dataset:
+  repo_id: local/piper_single_left
+  root: /home/robot/AgileX_ws/datasets/piper_single_left
+  video_backend: torchcodec
+  eval_split: 0.1  # Hold out whole episodes; collect enough episodes for both train and validation.
+  use_imagenet_stats: true
+
+policy:
+  type: act
+  device: cuda
+  push_to_hub: false
+  # Explicit inputs: extra motor/torque columns remain in the dataset but
+  # are not inputs of this RGB + joint-state baseline.
+  input_features:
+    observation.state: {type: STATE, shape: [7]}
+    observation.images.cam_h: {type: VISUAL, shape: [3, 480, 640]}
+    observation.images.cam_l: {type: VISUAL, shape: [3, 480, 640]}
+    observation.images.cam_r: {type: VISUAL, shape: [3, 480, 640]}
+  output_features:
+    action: {type: ACTION, shape: [7]}
+  chunk_size: 100
+  n_action_steps: 100
+  optimizer_lr: 1.0e-5
+  optimizer_lr_backbone: 1.0e-5
+  optimizer_weight_decay: 1.0e-4
+
+output_dir: /home/robot/AgileX_ws/outputs/act_piper_single_left
+job_name: act_piper_single_left
+seed: 1000
+steps: 100000
+batch_size: 8
+num_workers: 4
+prefetch_factor: 2
+log_freq: 50
+save_freq: 5000
+eval_steps: 5000
+max_eval_samples: 0  # Evaluate all held-out frames.
+env_eval_freq: 0    # Offline training only; no robot/simulation control.
+accelerator:
+  mixed_precision: bf16
+wandb:
+  enable: false

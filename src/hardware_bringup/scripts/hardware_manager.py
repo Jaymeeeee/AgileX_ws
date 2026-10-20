@@ -9,7 +9,7 @@ from pathlib import Path
 import rospy
 from std_msgs.msg import String
 from diagnostic_msgs.msg import DiagnosticArray,DiagnosticStatus,KeyValue
-from hardware_bringup.config import load_config,select,topic_specs,camera_command,check_can
+from hardware_bringup.config import load_config,select,topic_specs,camera_command,check_can,check_identity,acquisition_can_mode
 from hardware_bringup.monitor import TopicMonitor
 
 
@@ -37,6 +37,13 @@ class Manager:
         self.specs=topic_specs(self.cfg,self.arms,self.cameras)
         if self.mode=='deploy':
             self.specs=[s for s in self.specs if not s['topic'].endswith(('/leader_targets','/gripper/target_stamped'))]
+        self.teleop = bool(rospy.get_param('~teleop', False))
+        if self.teleop:
+            for side in self.arms:
+                for role, phase in (('leader','teaching'),('follower','following')):
+                    self.specs.append(dict(topic='/agilex/teleop/{}_{}'.format(side,role)+'/status',
+                        kind='teleop_status',meaning=side+' '+role+' ROS 主从控制状态',group='teleop',
+                        timeout=1.0,minimum_samples=1,phase=phase,side=side,role=role))
         self.pub=rospy.Publisher('/agilex/hardware/status',String,queue_size=1,latch=True)
         self.diag=rospy.Publisher('/agilex/hardware/diagnostics',DiagnosticArray,queue_size=1)
         self.children=[]
@@ -51,6 +58,10 @@ class Manager:
         record_topics=[s['topic'] for s in self.specs]
         record_topics += ['/piper/'+side+'_bus/events' for side in self.arms]
         record_topics += ['/agilex/hardware/status','/agilex/hardware/diagnostics']
+        if self.teleop:
+            for side in self.arms:
+                record_topics += ['/piper/'+side+'_leader/command',
+                                  '/agilex/teleop/'+side+'_follower/commanded']
         payload=dict(state=state,reason=reason,stamp=time.time(),mode=self.mode,arms=self.arms,cameras=self.cameras,
                      config=self.cfg,calibration=self.calibration,topics=rows,record_topics=record_topics)
         self.pub.publish(String(data=json.dumps(payload,ensure_ascii=False)))
@@ -96,10 +107,18 @@ class Manager:
     def run(self):
         if rospy.get_param('/use_sim_time',False):raise RuntimeError('Live hardware requires /use_sim_time=false')
         existing=dict(rospy.get_published_topics('/'))
-        conflicts=[s['topic'] for s in self.specs if s['topic'] in existing]
+        # Teleop endpoints are launched concurrently and own their command and
+        # health publishers. Only reject competing publishers of this manager's
+        # physical device streams, not its expected external input topics.
+        external_inputs = {s['topic'] for s in self.specs if s['kind']=='teleop_status' or (
+            self.cfg.get('topology')=='independent_can' and
+            s['topic'].endswith(('/leader_targets','/gripper/target_stamped')))}
+        conflicts=[s['topic'] for s in self.specs if s['topic'] in existing and s['topic'] not in external_inputs]
         if conflicts:raise RuntimeError('Topics already published, stop old drivers: '+str(conflicts))
         # Check every selected CAN before starting any camera or arm instance.
-        for side in self.arms:check_can(self.cfg['arms'][side]['channel'],self.cfg['arm_settings']['bitrate'],self.mode)
+        for side in self.arms:
+            check_identity(self.cfg['arms'][side])
+            check_can(self.cfg['arms'][side]['channel'],self.cfg['arm_settings']['bitrate'],acquisition_can_mode(self.cfg,self.mode))
         if rospy.get_param('~dry_run',False):
             for s in self.specs:rospy.loginfo('%s : %s',s['topic'],s['meaning'])
             self.publish('dry_run','configuration/preflight only; no devices started')

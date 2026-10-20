@@ -13,11 +13,43 @@ NAMES = [n for s in SIDES for n in
          [s + '_joint_' + str(i) for i in range(1, 7)] + [s + '_gripper_width']]
 
 
-def load_config(path):
+def arm_sides(value=None) -> tuple:
+    """Canonical physical arm selection; never infer a side from vector length."""
+    if value is None or value in ('both', 'all'):
+        return SIDES
+    if isinstance(value, str):
+        if value not in SIDES:
+            raise ValueError('arms must be both, left or right')
+        return (value,)
+    if not isinstance(value, (list, tuple)) or not value or len(set(value)) != len(value) or any(s not in SIDES for s in value):
+        raise ValueError('active_arms must contain left and/or right without duplicates')
+    return tuple(s for s in SIDES if s in value)
+
+
+def selected_sides(cfg) -> tuple:
+    return arm_sides(cfg.get('active_arms'))
+
+
+def action_names(sides=SIDES) -> list:
+    return [n for s in sides for n in
+            [s + '_joint_' + str(i) for i in range(1, 7)] + [s + '_gripper_width']]
+
+
+def load_config(path, arms=None, checkpoint=None):
     with open(Path(path).expanduser()) as f:
         c = yaml.safe_load(f)
     if c['schema_version'] != 1:
         raise ValueError('Unsupported deployment schema')
+    sides = arm_sides(c.get('active_arms') if arms is None else arms)
+    c['active_arms'] = list(sides)
+    for mapping in (c['observations']['arms'], c['control']['channels'], c['control']['expected_firmware']):
+        if not set(sides) <= set(mapping):
+            raise ValueError('Selected arm missing from deployment configuration')
+    c['observations']['arms'] = {s: c['observations']['arms'][s] for s in sides}
+    for key in ('channels', 'expected_firmware'):
+        c['control'][key] = {s: c['control'][key][s] for s in sides}
+    if checkpoint is not None:
+        c['checkpoint'] = checkpoint
     for section in ('policy', 'observations', 'control'):
         for k, v in c[section].items():
             if k.endswith('_sec') or k in ('fps', 'width', 'height', 'bitrate') or k.startswith('max_'):
@@ -27,17 +59,17 @@ def load_config(path):
         raise ValueError('This trained policy requires 15 Hz, 640x480 RGB')
     if c['policy']['device'] not in ('cpu', 'cuda'):
         raise ValueError('device must be cpu or cuda')
-    if set(c['observations']['cameras']) != set(CAMERAS) or set(c['observations']['arms']) != set(SIDES):
-        raise ValueError('Expected cam_h/l/r and left/right')
-    if set(c['control']['channels']) != set(SIDES) or len(set(c['control']['channels'].values())) != 2:
-        raise ValueError('Expected two distinct CAN channels')
+    if set(c['observations']['cameras']) != set(CAMERAS):
+        raise ValueError('Expected cam_h/l/r cameras')
+    if len(set(c['control']['channels'].values())) != len(sides):
+        raise ValueError('Expected distinct CAN channels for selected arms')
     if not 1 <= c['control']['sdk_speed_percent'] <= 100:
         raise ValueError('Invalid SDK speed percent')
     if not math.isfinite(c['policy']['temporal_ensemble_coeff']):
         raise ValueError('Invalid temporal ensemble coefficient')
     for k in ('checkpoint', 'python', 'log_dir'):
         c[k] = str(Path(c[k]).expanduser().resolve())
-    ActionGuard(c['control'], 1.0 / c['policy']['fps'])
+    ActionGuard(c['control'], 1.0 / c['policy']['fps'], sides)
     return c
 
 
@@ -63,8 +95,13 @@ def rgb_array(msg, height, width):
 
 
 class ActionGuard:
-    def __init__(self, cfg, period):
+    def __init__(self, cfg, period, sides=SIDES):
         self.cfg, self.period = cfg, period
+        self.sides = arm_sides(sides)
+        count = len(self.sides)
+        self.names = action_names(self.sides)
+        self.dimension = 7*count
+        self.gripper_indices = np.arange(6, self.dimension, 7)
         low = np.asarray(cfg['joint_min'], dtype=float)
         high = np.asarray(cfg['joint_max'], dtype=float)
         if low.shape != (6,) or high.shape != (6,) or not np.isfinite([low, high]).all() or np.any(low >= high):
@@ -74,15 +111,15 @@ class ActionGuard:
         for k in ('boundary_tolerance_rad', 'boundary_tolerance_m', 'gripper_force'):
             if not math.isfinite(cfg[k]) or cfg[k] < 0:
                 raise ValueError('Invalid ' + k)
-        self.low = np.tile(np.r_[low, cfg['gripper_min']], 2)
-        self.high = np.tile(np.r_[high, cfg['gripper_max']], 2)
-        self.tolerance = np.tile([cfg['boundary_tolerance_rad']]*6 + [cfg['boundary_tolerance_m']], 2)
-        self.max_error = np.tile([cfg['max_target_error_rad']]*6 + [cfg['max_target_error_m']], 2)
+        self.low = np.tile(np.r_[low, cfg['gripper_min']], count)
+        self.high = np.tile(np.r_[high, cfg['gripper_max']], count)
+        self.tolerance = np.tile([cfg['boundary_tolerance_rad']]*6 + [cfg['boundary_tolerance_m']], count)
+        self.max_error = np.tile([cfg['max_target_error_rad']]*6 + [cfg['max_target_error_m']], count)
         self.initial_error = np.tile([cfg.get('max_initial_error_rad', cfg['max_target_error_rad'])]*6
-                                     + [cfg.get('max_initial_error_m', cfg['max_target_error_m'])], 2)
+                                     + [cfg.get('max_initial_error_m', cfg['max_target_error_m'])], count)
         self.tracking_error = np.tile([cfg.get('max_tracking_error_rad', cfg['max_target_error_rad'])]*6
-                                      + [cfg.get('max_tracking_error_m', cfg['max_target_error_m'])], 2)
-        self.speed = np.tile([cfg['max_joint_speed_rad_s']]*6 + [cfg['max_gripper_speed_m_s']], 2)
+                                      + [cfg.get('max_tracking_error_m', cfg['max_target_error_m'])], count)
+        self.speed = np.tile([cfg['max_joint_speed_rad_s']]*6 + [cfg['max_gripper_speed_m_s']], count)
         for key in ('check_initial_target_error', 'check_runtime_target_error', 'check_gripper_tracking_error'):
             if not isinstance(cfg.get(key, True), bool):
                 raise ValueError(key + ' must be a YAML boolean (true/false)')
@@ -93,19 +130,19 @@ class ActionGuard:
 
     def bounded(self, value):
         value = np.asarray(value, dtype=float)
-        if value.shape != (14,) or not np.isfinite(value).all():
-            raise ValueError('Expected finite 14D state/action')
+        if value.shape != (self.dimension,) or not np.isfinite(value).all():
+            raise ValueError('Expected finite {}D state/action'.format(self.dimension))
         invalid = (value < self.low-self.tolerance) | (value > self.high+self.tolerance)
         if np.any(invalid):
             detail = ', '.join('{}={:.5f} range=[{:.5f},{:.5f}]'.format(
-                NAMES[i], value[i], self.low[i], self.high[i]) for i in np.flatnonzero(invalid))
+                self.names[i], value[i], self.low[i], self.high[i]) for i in np.flatnonzero(invalid))
             raise ValueError('State/action exceeds configured limits: ' + detail)
         return np.clip(value, self.low, self.high)
 
     def prepare(self, target, actual, initial=False):
         target = np.asarray(target, dtype=float)
-        if target.shape != (14,) or not np.isfinite(target).all():
-            raise ValueError('Expected finite 14D action')
+        if target.shape != (self.dimension,) or not np.isfinite(target).all():
+            raise ValueError('Expected finite {}D action'.format(self.dimension))
         actual = self.bounded(actual)
         # Regression can predict just beyond an endpoint (e.g. negative width).
         # Optional model-distance gate; wire commands always retain rate/range/tracking limits.
@@ -114,18 +151,18 @@ class ActionGuard:
         if check_error and np.any(np.abs(target-actual) > error_limit):
             bad = np.flatnonzero(np.abs(target-actual) > error_limit)
             detail = ', '.join('{}: target={:.4f}, actual={:.4f}, limit={:.4f}'.format(
-                NAMES[i], target[i], actual[i], error_limit[i]) for i in bad)
+                self.names[i], target[i], actual[i], error_limit[i]) for i in bad)
             raise ValueError(('Initial model target' if initial else 'Model target') + ' too far from actual pose: ' + detail)
         target = np.clip(target, self.low, self.high)
         previous = actual if self.previous is None else self.previous
         tracking_violation = np.abs(previous-actual) > self.tracking_error
         if not self.check_gripper_tracking_error:
-            tracking_violation[[6, 13]] = False
+            tracking_violation[self.gripper_indices] = False
         if np.any(tracking_violation):
             bad = np.flatnonzero(tracking_violation)
             detail = ', '.join('{}: commanded={:.4f}, actual={:.4f}, error={:.4f}, limit={:.4f} {}'.format(
-                NAMES[i], previous[i], actual[i], abs(previous[i]-actual[i]), self.tracking_error[i],
-                'm' if i in (6, 13) else 'rad') for i in bad)
+                self.names[i], previous[i], actual[i], abs(previous[i]-actual[i]), self.tracking_error[i],
+                'm' if i % 7 == 6 else 'rad') for i in bad)
             raise ValueError('Follower is not tracking commanded pose: ' + detail)
         # Never allow a larger jump after a delayed cycle.
         sent = previous + np.clip(target-previous, -self.speed*self.period, self.speed*self.period)
@@ -135,7 +172,7 @@ class ActionGuard:
         if not self.check_gripper_tracking_error:
             # If feedback suddenly moves far from the prior gripper command,
             # approach the feedback envelope at the configured rate, never jump to it.
-            indices = [6, 13]
+            indices = self.gripper_indices
             step = self.speed[indices]*self.period
             sent[indices] = np.clip(sent[indices], previous[indices]-step, previous[indices]+step)
         return sent

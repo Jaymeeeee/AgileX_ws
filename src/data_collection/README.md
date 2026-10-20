@@ -4,9 +4,21 @@
 
 硬件录制用 ROS Noetic / 系统 Python；离线转换用独立的 LeRobot Python >= 3.12 环境。本文通用采集目录采用 `bags/insert_plug_v2/task_0001`，每次演示一个目录，后续依次使用 `task_0002`、`task_0003`。
 
+## 单臂选择
+
+默认仍为双臂。单臂使用 `teleop.sh --arms left/right --execute --cameras all` 配合
+`record.sh --arms left/right --output DIR`；主从控制、录制必须选同一侧。
+录制只保存所选侧的机械臂话题和现有相机/全局诊断，清单记录选择；不需要 `--allow-partial`。
+遥操作终端的 `r` 只复位所选侧主从臂。
+
+转换时同样传 `convert_lerobot.sh --arms left/right`，只要求该侧机械臂数据，
+输出 7 维状态/动作，辅助电机字段为所选侧的 6 维；默认三相机不变。
+不传参数仍按双臂 14 维转换；也可以从完整双臂 bag 中显式提取一侧。
+完整命令见[工作空间单臂操作](../../README.md#选择双臂或单臂)。
+
 ## 录制 rosbag
 
-终端 1 按[硬件启动说明](../../docs/hardware.md#采集模式启动与停止)启动采集模式并等待 `READY`。终端 2 指定采集目录，执行后开始录制：
+终端 1 使用 `~/AgileX_ws/teleop.sh --execute --cameras=all` 启动四臂采集模式，输入 `d` 完成对齐、跟随和夹爪接管，等待 `READY`。不要另开 `start_hardware.sh`。终端 2 指定采集目录，执行后开始录制：
 
 ```bash
 ~/AgileX_ws/record.sh --output=~/AgileX_ws/bags/insert_plug_v2/task_0001
@@ -41,6 +53,8 @@ bags/insert_plug_v2/task_0001/
 默认至少保留 5 GiB 磁盘空间。硬件异常、心跳过期、配置变化、磁盘不足或录制进程退出会结束录制并标为 `incomplete`。`complete` 表示 bag 可读、必需话题有消息、无遗留 `.active` 且未检测到缓冲溢出，不保证无任何丢帧或时序误差。先停止录制，再关闭硬件。
 
 消息保留原始 header，bag 时间为录制端接收时间；静止主臂目标保留最后值及原时间戳。不做插值、重采样、跨设备同步或训练格式转换。
+
+需要复位时，在遥操作终端输入 `r` 后按回车：先保存并结束当前录制，再执行从臂原复位流程和主臂对齐。复位完成后四臂保持；输入 `d` 重新跟随并等到 READY 后，换新目录运行下一次 `record.sh`。保存失败不会开始复位。详细动作、空间要求见[采集复位](../../docs/teleop.md#启动)。
 
 ## 查看与回放 bag 消息
 

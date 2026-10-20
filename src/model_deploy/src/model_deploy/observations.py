@@ -4,7 +4,7 @@ import json
 import threading
 import time
 import numpy as np
-from .core import CAMERAS, SIDES, joint_values, rgb_array
+from .core import CAMERAS, selected_sides, joint_values, rgb_array
 
 
 class Observations:
@@ -13,6 +13,7 @@ class Observations:
         from sensor_msgs.msg import Image, JointState
         from std_msgs.msg import String
         self.cfg = cfg
+        self.sides = selected_sides(cfg)
         self.lock = threading.Lock()
         self.buffers, self.errors, self.subs = {}, {}, []
         self.hardware_mode = None
@@ -89,7 +90,7 @@ class Observations:
     def actual(self, status=True):
         with self.lock:
             parts = []
-            for s in SIDES:
+            for s in self.sides:
                 if status:
                     self._latest(s+'_status', self.cfg['observations']['status_age_sec'])
                 parts.extend(self._latest(s+k, self.cfg['observations']['state_age_sec'])[1] for k in ('_j', '_g'))
@@ -115,7 +116,7 @@ class Observations:
             if not result:
                 raise RuntimeError('No complete fresh camera group within timestamp tolerance')
             parts = []
-            for s in SIDES:
+            for s in self.sides:
                 self._latest(s+'_status', o['status_age_sec'])
                 for suffix in ('_j', '_g'):
                     k = s+suffix
@@ -133,7 +134,7 @@ class Observations:
             if self.hardware_mode != 'deploy' or time.monotonic()-self.hardware_received > 2:
                 raise RuntimeError('Start hardware with mode:=deploy and wait for status')
             cfg = self.hardware_config
-            for s in SIDES:
+            for s in self.sides:
                 arm = cfg['arms'][s]
                 if arm['channel'] != self.cfg['control']['channels'][s] or arm['model'] != 'piper':
                     raise RuntimeError('Hardware/control CAN mapping or model mismatch')

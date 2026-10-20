@@ -9,6 +9,7 @@
   <depend>rospy</depend>
   <depend>sensor_msgs</depend>
   <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
   <depend>hardware_bringup</depend>
   <exec_depend>rosbag</exec_depend>
   <exec_depend>python3-numpy</exec_depend>

@@ -1,4 +1,5 @@
 schema_version: 1
+topology: independent_can
 cameras:
   cam_h: {serial: '262522071923', role: third_person}
   cam_l: {serial: '262522071867', role: left_arm}
@@ -11,9 +12,12 @@ camera_settings:
   startup_timeout_sec: 45.0
   stagger_sec: 3.0
 arms:
-  # User confirmed standard Piper on both sides. Firmware version is still unverified.
-  left: {channel: can0, parser: default, model: piper, firmware: unknown, command_id_offset: 0, feedback_id_offset: 0}
-  right: {channel: can1, parser: default, model: piper, firmware: unknown, command_id_offset: 0, feedback_id_offset: 0}
+  # 2026-10-19: identified by unplugging each USB adapter individually.
+  left: {channel: can3, usb_path: '1-5.3:1.0', parser: v188, model: piper, firmware: S-V1.9-0, command_id_offset: 0, feedback_id_offset: 0}
+  right: {channel: can0, usb_path: '1-5.2.2:1.0', parser: v188, model: piper, firmware: S-V1.9-0, command_id_offset: 0, feedback_id_offset: 0}
+leaders:
+  left: {channel: can1, usb_path: '1-5.4:1.0', parser: v188, model: piper, firmware: S-V1.9-0, command_id_offset: 0, feedback_id_offset: 0}
+  right: {channel: can2, usb_path: '1-5.2.3:1.0', parser: v188, model: piper, firmware: S-V1.9-0, command_id_offset: 0, feedback_id_offset: 0}
 arm_settings:
   bitrate: 1000000
   assembly_span_sec: 0.05

@@ -3,6 +3,8 @@ from pathlib import Path
 import time
 import unittest
 import tempfile
+import threading
+from unittest.mock import Mock, patch
 
 path=Path(__file__).resolve().parents[1]/'scripts/bag_recorder.py'
 spec=importlib.util.spec_from_file_location('bag_recorder_test',path)
@@ -10,6 +12,41 @@ module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
 
 
 class RecordingTests(unittest.TestCase):
+    def test_selected_arm_filters_all_unselected_arm_topics(self):
+        state = self.state()
+        state['topics'] += [{'topic': '/piper/'+s+'_bus/joint_states', 'ok': True} for s in ('left','right')]
+        state['topics'][0]['topic'] = '/cam_h/color/image_raw'
+        state['record_topics'] += ['/piper/'+s+'_bus/joint_states' for s in ('left','right')]
+        state['record_topics'] += ['/agilex/teleop/right_leader/status', '/piper/right_leader/command']
+        for side in ('left','right'):
+            chosen = module.selected_hardware(state, [side])
+            self.assertEqual(chosen['arms'], [side])
+            self.assertEqual(module.ready_error(chosen,time.monotonic(),3,[side],state['cameras'],False), '')
+            other = 'left' if side == 'right' else 'right'
+            self.assertFalse(any('/'+other+'_' in topic for topic in chosen['record_topics']))
+        self.assertEqual(state['arms'], ['left','right'])
+
+    def test_cli_exits_after_external_stop_releases_the_episode(self):
+        recorder=module.Recorder.__new__(module.Recorder)
+        recorder.guard=threading.RLock()
+        recorder.output_file=Path('/tmp/episode/data.bag')
+        recorder.proc=None;recorder.manifest=None
+        recorder.root=Path('/tmp');recorder.minimum=0
+        recorder.reason=Mock(return_value='')
+        def start(_):
+            recorder.proc=Mock();recorder.proc.poll.return_value=None
+            recorder.manifest={'state':'recording'}
+            return Mock(success=True)
+        def remote_stop(_):
+            recorder.proc=None;recorder.manifest['state']='complete'
+        recorder.start=start
+        with patch.object(module.rospy,'is_shutdown',side_effect=[False,False,True]) as shutdown, \
+             patch.object(module.rospy,'get_param',return_value=120), \
+             patch.object(module.rospy,'loginfo'), patch.object(module.time,'sleep',side_effect=remote_stop) as sleep:
+            recorder.run()
+        self.assertEqual(shutdown.call_count,2)
+        sleep.assert_called_once()
+
     def test_completed_output_allowed_but_active_output_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             path=Path(tmp)/'episode';path.mkdir()

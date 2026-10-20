@@ -1,16 +1,32 @@
 # model_deploy：双臂 ACT 部署与轨迹回放
 
+四路独立 CAN 的 ROS 主从入口为 `~/AgileX_ws/teleop.sh`，完整操作、速度参数和采集方式见[主从控制说明](../../docs/teleop.md)。
+已确认映射：左主 can1、右主 can2、左从 can3、右从 can0。遥操作、ACT、复位和回放共享控制锁，不能同时控制从臂。
+
 [返回工作空间 README](../../README.md) · [硬件模式切换](../../docs/hardware.md#切换部署模式与恢复采集) · [训练与检查点](../../training/README.md)
 
 `start_hardware.sh` 发布相机/机械臂实际反馈；`deploy.sh` 订阅 ROS，调用现有 LeRobot ACT，经过动作检查后用 pyAgxArm SDK 控制左右从臂和夹爪。ROS 使用系统 Python 3.8，GPU 推理使用 `lerobot` Python 3.12，两者由脚本自动管理。
 
+## 单臂或双臂
+
+默认双臂。部署/离线推理支持 `--arms both|left|right`，可用 `--checkpoint PATH` 覆盖 YAML 中的权重路径。
+例如 `deploy.sh --arms right --checkpoint /path/to/right/pretrained_model --dry-run`。
+硬件需对应使用 `start_hardware.sh mode:=deploy arms:=right`，执行时只连接该侧 CAN 和反馈。
+单臂严格要求同侧的 7 维 ACT 检查点，不能从当前 14 维双臂模型中自动截取；三相机要求保留。
+输出 JointState 的 name/position 与所选侧一致，为 7 维；不选择时仍为 14 维。
+
+`reset.sh --arms left/right` 只复位所选从臂；`teleop.sh --arms left/right` 只启动该侧主从节点，
+采集终端 `r` 只复位所选主从臂。复位位置和限速仍使用原有配置。
+参数也可通过 `act.yaml`、`teleop.yaml` 的 `active_arms` 持久设置；命令行选择优先。
+双臂行为和 `replay.sh` 的既有双臂回放入口保留。完整操作见[工作空间说明](../../README.md#选择双臂或单臂)。
+
 ## 先运行只推理模式
 
-终端 1，沿用采集模式（CAN 只接收）；首次启动先准备 CAN：
+普通部署仅需双从臂和相机通电，主臂可断电。先退出采集遥操作与旧硬件；终端 1：
 
 ```bash
-~/AgileX_ws/prepare_can.sh
-~/AgileX_ws/start_hardware.sh
+~/AgileX_ws/prepare_can.sh --mode=deploy
+~/AgileX_ws/start_hardware.sh mode:=deploy
 ```
 
 终端 2：
@@ -23,7 +39,7 @@
 
 ## 正式执行
 
-先让两侧主臂退出控制，确保总线上仅电脑控制从臂。主臂静止不代表已退出控制；不要仅靠停止拖动来切换。手动将从臂及物体放到采集时的起始状态。
+先退出 `teleop.sh` 及其他 SDK 控制程序，释放从臂控制锁；主臂可以断电。手动将从臂及物体放到采集时的起始状态。`prepare_can.sh --mode=deploy` 默认仅准备从臂 can3/can0。
 
 停止旧的硬件发布和部署进程，再切换 CAN 模式（sudo 密码只在本机终端输入）：
 
@@ -59,15 +75,16 @@
 恢复采集前，先停止部署和硬件，再运行：
 
 ```bash
-~/AgileX_ws/prepare_can.sh --mode=record
-~/AgileX_ws/start_hardware.sh
+~/AgileX_ws/prepare_can.sh --mode=teleop
+~/AgileX_ws/teleop.sh --execute --cameras=all
+# 输入 d，夹爪接管且 READY 后再启动 record.sh。
 ```
 
 部署模式不发布 `leader_targets`、`gripper/target_stamped`，避免把电脑控制回显当成主臂示范；回显仍可在 `events` 中追溯，并标记来源。采集模式维持原有话题。
 
 ## 复位到固定姿态
 
-模型退出后，保持 `start_hardware.sh mode:=deploy` 运行，在第二终端执行：
+普通模型退出后，保持 `start_hardware.sh mode:=deploy` 运行，在第二终端执行。这里只连接、复位两台从臂，主臂可以断电：
 
 ```bash
 ~/AgileX_ws/reset.sh --dry-run   # 可选：只打印目标与动作顺序，不连接 SDK/CAN
@@ -83,6 +100,8 @@
 抬升完成后以新鲜关节实测值开始关节插值回位。打开会释放夹持物，请先取下或托住物体，并解除插接接触、留出空间。抬升不能保证整条臂身和后续回位段不碰桌面；当前没有桌面模型、碰撞检测或避障规划，最终 reset 姿态及其路径也须留有间隙。`--dry-run` 仅打印相对抬升要求，不读取设备限位或验证当前姿态的可达性。
 
 默认姿态在 `act.yaml` 的 `reset.home_joints_rad`，左右分别按 J1~J6 填写，单位 rad。当前左右均为用户指定的 `[0, 0, 0, 0, 24, 0]°`，以弧度存储；后续修改以配置文件为准。它不随新一次部署改变，也不依赖原日志文件。模型仍在运行时，复位会因 CAN 控制锁被占用而拒绝启动。
+
+采集遥操作运行时在 `teleop>` 输入 `r`，由已有四个节点完成从臂复位与主臂对齐，不另开 `reset.sh`，详见[采集复位](../../docs/teleop.md#启动)。RL 人在环尚未实现；当前两个入口不提供模型与人工控制权切换。
 
 如需临时改用某次部署的起始姿态，可以显式传入 `--from-run` 覆盖固定姿态。新版日志读取 `start_pose.json`；旧版日志使用首帧观测作为近似起始姿态：
 
@@ -185,7 +204,7 @@ rostopic echo /agilex/deploy/predicted_action
 rostopic echo /agilex/deploy/commanded_action
 ```
 
-后两个话题均为 `sensor_msgs/JointState`，`position` 是 14 维目标，`name` 给出顺序。预测话题时间是参考观测时间，下发话题时间是发送时间。dry-run 不向 `commanded_action` 发布消息。
+后两个话题均为 `sensor_msgs/JointState`，`position` 在双臂模式为 14 维、单臂模式为 7 维，`name` 给出所选侧和顺序。预测话题时间是参考观测时间，下发话题时间是发送时间。dry-run 不向 `commanded_action` 发布消息。
 
 每次运行新建 `logs/deploy/<时间>/`，包含 `config.json`、`inference.log`、`actions.jsonl`、`result.json`；控制/固件查询另外保存 `firmware.json`。逐步日志保留源时间、状态、预测、限幅维度、实际发送目标和耗时，不保存重复图像。日志中的“已发送”不代表物理执行已确认。
 

@@ -1,6 +1,6 @@
 # AgileX_ws：双组 Piper 主从臂与三台 D435
 
-ROS 1 Noetic 工作空间，用于硬件状态发布、rosbag 采集、LeRobot 数据转换、ACT 训练及双从臂部署。默认采集模式下 CAN 只接收；部署、复位和实机轨迹回放由独立 SDK 控制器下发动作。
+ROS 1 Noetic 工作空间，用于四路独立 CAN 的 Piper ROS 主从控制、硬件状态发布、rosbag 采集、LeRobot 数据转换、ACT 训练及双从臂部署。当前四台臂各接一个 USB-CAN，主从之间通过 ROS 和 SDK 软件跟随。
 
 完整流程：**准备环境 → 启动硬件 → 录制演示 → 转换数据 → 训练 ACT → 部署验证**。
 
@@ -32,18 +32,76 @@ LeRobot 依赖安装见[转换环境](src/data_collection/README.md#转换环境
 | 第三视角相机 | `cam_h` | `262522071923` |
 | 左臂相机 | `cam_l` | `262522071867` |
 | 右臂相机 | `cam_r` | `262522070143` |
-| 左组主从臂 | `can0` | — |
-| 右组主从臂 | `can1` | — |
+| 左主臂 / 左从臂 | `can1` / `can3` | — |
+| 右主臂 / 右从臂 | `can2` / `can0` | — |
 
-相机按序列号绑定名称，默认 640×480、15 FPS，发布彩色图、深度图及对齐深度图。USB-CAN 重插后需确认左右映射。
+相机按序列号绑定名称，默认 640×480、15 FPS，发布彩色图、深度图及对齐深度图。CAN 接口同时校验 USB 物理路径。四路主从控制、主臂对齐、跟随速度及录制方法见[四路 CAN 主从控制](docs/teleop.md)。
 
-| 场景 | CAN / 硬件模式 | 入口 |
+| 运行模式 | 通电设备与控制方向 | 入口与复位 |
 | --- | --- | --- |
-| 演示采集、在线只推理检查 | LISTEN-ONLY / 默认 `record` | `record.sh`、`deploy.sh --dry-run` |
-| 模型控制、复位、实机轨迹回放 | 正常收发 / `mode:=deploy` | `deploy.sh --execute`、`reset.sh`、`replay.sh --execute` |
-| 数据转换、训练、离线推理、轨迹预览 | 无需连接硬件 | 转换脚本、训练脚本、`deploy.sh --offline`、`replay.sh --dry-run` |
+| 数据采集（已实现） | 四臂通电；主臂 → ROS → 从臂，100 Hz | `teleop.sh --execute --cameras=all`＋`record.sh`；遥操作终端输入 `r` 复位四臂 |
+| 一般模型部署（已实现） | 仅双从臂需要通电；模型 → 从臂，主臂可以断电 | `start_hardware.sh mode:=deploy`＋`deploy.sh --execute`；模型退出后 `reset.sh` 只复位从臂 |
+| RL 人在环（待实现） | 四臂通电；模型 → 从臂 → 主臂，人工接管时切换为主臂 → 从臂 | 后续实现模型/人工控制权切换、主臂同步与四臂复位；当前没有该模式入口 |
 
-切换模式前先停止录制或 SDK 控制程序，再停止硬件管理器。部署模式下两侧主臂须退出控制，静止不代表退出。完整启动选项、就绪状态和恢复采集步骤见[硬件说明](docs/hardware.md)。
+三种模式使用四路独立接线和正常 ACK CAN；硬件管理器内部的 `record/deploy` 是话题与监控配置，并非额外的操作模式。在线只推理用普通部署硬件＋`deploy.sh --dry-run`。数据转换、训练、离线推理和轨迹预览不需要连接机械臂。
+
+切换模式前先停止录制和当前控制程序，再停止硬件管理器。遥操作与独立部署、复位、回放进程共享控制锁；采集的 `r` 在现有节点内执行复位。四路独立接线不应恢复主从 CAN 直连。完整启动选项见[硬件说明](docs/hardware.md)。
+
+## 选择双臂或单臂
+
+以下默认流程仍为双臂。`teleop.sh`、`record.sh`、数据转换、`deploy.sh` 和 `reset.sh` 新增统一参数
+`--arms both|left|right`，不传时默认双臂。单臂指一侧 6 个关节＋夹爪，共 **7 维**；
+默认仍使用三路相机。选择不会自动切换相机，也不会将双臂模型裁成单臂模型。
+
+**只用左臂采集**：仅左主臂和左从臂需要通电，其他接线保持原状。
+
+```bash
+cd ~/AgileX_ws
+./prepare_can.sh --mode=teleop can1 can3
+./teleop.sh --arms left --configure-only
+./teleop.sh --arms left --execute --cameras all
+# 回车使能保持，输入 d 对齐并跟随；同一终端 r 只复位左侧主从臂。
+
+# 另一终端录制；每段换一个目录，Ctrl+C 保存。
+./record.sh --arms left --output ~/AgileX_ws/bags/task_single_left_0001
+```
+
+录制会筛掉另一侧机械臂话题，清单记录所选侧；单臂采集不需要 `--allow-partial`。
+`teleop.sh` 与 `record.sh` 的选择要一致。若硬件管理器仍按双臂启动，它仍会等待另一侧，
+因此切换前需退出旧的采集/硬件进程，再按新参数启动。
+
+将这些单臂 bag 转为 7 维数据并训练（先采集足够多的 episode）：
+
+```bash
+./src/data_collection/scripts/convert_lerobot.sh --arms left \
+  --episodes task_single_left_0001 task_single_left_0002 \
+  --output ~/AgileX_ws/datasets/piper_single_left
+# --episodes 后可列出同批全部目录；省略会扫描转换 YAML 中所有匹配的 bag。
+./training/train_act.sh --config_path=training/act_left.yaml
+```
+
+转换同时筛选状态、动作、电流/力矩/电机反馈；动作列顺序为所选侧 J1..J6、夹爪宽度。
+模板 `training/act_left.yaml` 和 `training/act_right.yaml` 均使用三相机、7 维状态/动作；
+默认输出目录已与双臂分开，重复训练需指定新的输出目录。
+
+**只部署左从臂**：停止遥操作及旧硬件进程；仅左从臂和三相机需要通电。
+
+```bash
+./prepare_can.sh --mode=deploy can3
+./start_hardware.sh mode:=deploy arms:=left
+
+# 另一终端：替换为同侧训练所得的真实 7 维检查点。
+./deploy.sh --arms left --checkpoint /path/to/left/pretrained_model --dry-run
+./deploy.sh --arms left --checkpoint /path/to/left/pretrained_model --execute
+# 模型程序退出后，只复位左从臂；默认仍先开爪、抬升，再回原固定姿态。
+./reset.sh --arms left
+```
+
+右侧操作将 `left` 换为 `right`，CAN 采集准备为 `can2 can0`、部署准备为 `can0`，训练配置为
+`training/act_right.yaml`，数据/模型目录也相应改为右侧。部署检查点必须与采集侧一致；
+程序检查 7/14 维契约，但无法仅凭一个没有侧别元数据的 7 维权重判断它训练于左侧还是右侧。
+已有双臂 14 维 ACT 检查点不能直接用于 `--arms left/right`，会在控制器使能前拒绝加载。
+当前 `replay.sh` 的实机轨迹回放仍按原双臂流程使用。
 
 ## 数据采集
 
@@ -52,11 +110,13 @@ LeRobot 依赖安装见[转换环境](src/data_collection/README.md#转换环境
 关闭占用相机的 RealSense Viewer 或其他驱动。终端 1 准备 CAN 并启动硬件：
 
 ```bash
-~/AgileX_ws/prepare_can.sh
-~/AgileX_ws/start_hardware.sh
+~/AgileX_ws/prepare_can.sh --mode=teleop
+~/AgileX_ws/teleop.sh --configure-only
+~/AgileX_ws/teleop.sh --execute --cameras=all
+# 按回车使能保持，再输入 d 对齐主臂并开启跟随。
 ```
 
-`prepare_can.sh` 需要本机 sudo 权限，默认准备 1 Mbps、LISTEN-ONLY 接口；正在以其他模式运行时拒绝隐式切换。等待 `READY` 后再录制。采集模式下所选侧的主臂关节和夹爪目标须至少收到一次；尚未收到时为 `DEGRADED`。目标缓存保留原时间戳，不能证明主臂持续在线。
+`prepare_can.sh` 需要本机 sudo 权限，准备全部四路 1 Mbps 正常 CAN，配置正确时跳过。独立单臂需要电脑提供 ACK。等待主从跟随开启及 `READY` 后再录制；先停止录制，再暂停或退出遥操作。目标缓存保留原时间戳，源健康另行检查。
 
 在另一终端查看图像：
 
@@ -87,6 +147,12 @@ bags/insert_plug_v2/task_0001/
 **同一目录再次录制会在硬件与磁盘检查通过后覆盖其中的 bag、清单和日志。** 要保留上一段，请换目录；存在 `data.bag.active` 时拒绝覆盖。默认要求双臂和三相机全部就绪，并保留至少 5 GiB 磁盘空间。
 
 `complete` 表示录制文件通过完整性检查，不保证没有丢帧或时序误差。部分设备采集、失败处理及完整判定见[录制说明](src/data_collection/README.md#录制-rosbag)。
+
+### 采集时复位
+
+在 `teleop>` 终端输入 `r` 后按回车。程序先结束并保存正在录制的当前段，然后暂停跟随、保持主臂，让左右从臂依次执行原复位流程，再让主臂对齐各自从臂。固定关节姿态仍为左右 `[0, 0, 0, 0, 24, 0]°`，以 `act.yaml` 的 `reset.home_joints_rad` 为准。开爪会释放物体，请先解除插接接触并留出路径、放开主臂。
+
+完成后四臂保持，不自动恢复跟随。输入 `d` 重新进入采集，夹爪接管且 `READY` 后再录制下一段。当前段保存失败或任何复位阶段失败都会阻止后续运动；不会把复位动作写入刚结束的演示。不要在遥操作运行时另开 `reset.sh`。
 
 先停止录制，再在硬件终端按 **Ctrl+C**。停止 ROS 发布不等同于机械臂断电或急停。离线检查和 `rosbag play` 见[bag 消息回放](src/data_collection/README.md#查看与回放-bag-消息)；控制实机重复动作见下文[实机轨迹回放](#实机轨迹回放)。
 
@@ -125,20 +191,20 @@ bags/insert_plug_v2/task_0001/
 
 ### 只推理检查与正式部署
 
-保持采集模式硬件运行，在第二终端检查实时推理：
-
-```bash
-~/AgileX_ws/deploy.sh --dry-run --duration=10
-```
-
-该命令不创建 SDK 控制器、不发送使能或动作。检查推理日志与预测结果后，正式控制前让主臂退出控制，准备好从臂与物体的初始状态，停止旧硬件及其他控制进程。终端 1 切换模式并启动反馈：
+普通部署仅需双从臂和相机通电，主臂可断电。先退出遥操作及旧硬件发布，在终端 1 启动部署反馈：
 
 ```bash
 ~/AgileX_ws/prepare_can.sh --mode=deploy
 ~/AgileX_ws/start_hardware.sh mode:=deploy
 ```
 
-终端 2：
+`--mode=deploy` 默认只准备左从 can3、右从 can0，不检查两台主臂 CAN。终端 2 先检查实时推理：
+
+```bash
+~/AgileX_ws/deploy.sh --dry-run --duration=10
+```
+
+该命令不创建 SDK 控制器、不发送使能或动作。确认推理结果并准备好从臂、物体初始状态后，在终端 2 执行：
 
 ```bash
 ~/AgileX_ws/deploy.sh --probe-firmware
@@ -151,7 +217,7 @@ bags/insert_plug_v2/task_0001/
 
 ### 固定姿态复位
 
-模型退出后，保持部署模式硬件发布运行：
+一般模型退出后，保持部署模式硬件发布运行；以下只复位两台从臂，不连接或移动主臂：
 
 ```bash
 ~/AgileX_ws/reset.sh --dry-run
@@ -188,6 +254,10 @@ bags/insert_plug_v2/task_0001/
 自动移动到起点的 `--move-to-start`、倍率和反馈检查见[完整回放说明](src/model_deploy/README.md#从-bag-回放实机轨迹)。
 
 ## 配置与详细文档
+
+RLT 实验代码位于独立的 [LeRobot `test/pi05_rlt` 分支](https://github.com/Jaymeeeee/lerobot/tree/test/pi05_rlt)。
+当前决定先按现有实现训练，已知差异暂不修改；清单见[论文核对](docs/rlt_paper_audit.md)，
+分支对应的固定提交与换机器克隆方法见[依赖仓库说明](third_party/README.md)。
 
 | 模块 | 配置入口 | 详细说明 |
 | --- | --- | --- |

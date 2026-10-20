@@ -15,6 +15,22 @@ import bag_to_lerobot as converter
 
 
 class TimingAndDecodingTests(unittest.TestCase):
+    def test_single_arm_configuration_drops_other_side_from_all_vectors(self):
+        for side in ('left', 'right'):
+            cfg = converter.load_config(converter.DEFAULT_CONFIG, arms=side)
+            other = 'left' if side == 'right' else 'right'
+            for key in ('observation.state', 'action'):
+                names = [name for seg in cfg['vectors'][key] for name in seg['names']]
+                self.assertEqual(len(names), 7)
+                self.assertTrue(all(name.startswith(side+'_') for name in names))
+                self.assertEqual(names[-1], side+'_gripper_width')
+            self.assertEqual(sum(len(seg['names']) for seg in cfg['vectors']['observation.motor_velocity_rad_s']), 6)
+            self.assertTrue(all('/piper/'+other+'_' not in cfg['sources'][sid]['topic'] for sid in converter.requirements(cfg)))
+            self.assertEqual(len(converter.active_images(cfg)), 3)
+            self.assertEqual(cfg['dataset']['robot_type'], 'piper_single_'+side)
+        both = converter.load_config(converter.DEFAULT_CONFIG)
+        self.assertEqual(sum(len(seg['names']) for seg in both['vectors']['action']), 14)
+
     def test_actions_are_causal_and_images_choose_nearest(self):
         stamps = np.array([10, 20, 30])
         grid = np.array([9, 15, 19, 30, 40])
@@ -68,6 +84,54 @@ class TimingAndDecodingTests(unittest.TestCase):
 
 
 class SyntheticBagRoundtrip(unittest.TestCase):
+    def test_single_arm_bag_without_other_arm_exports_seven_dimensions(self):
+        from rosbags.rosbag1 import Writer
+        from rosbags.typesys import Stores, get_typestore
+        from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+        store = get_typestore(Stores.ROS1_NOETIC)
+        Header = store.types['std_msgs/msg/Header']
+        Time = store.types['builtin_interfaces/msg/Time']
+        JointState = store.types['sensor_msgs/msg/JointState']
+        Image = store.types['sensor_msgs/msg/Image']
+        for side in ('left', 'right'):
+            with tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                bag = root/'single.bag'
+                sources = {s: {'topic': '/piper/'+s+'_bus/joint_states', 'timestamp':'header',
+                    'sample':'previous', 'max_age_sec':1.1, 'order_field':'name',
+                    'order':[s+'_joint_'+str(i) for i in range(1,7)]+[s+'_gripper_width']} for s in ('left','right')}
+                sources['cam'] = {'topic':'/cam/image', 'timestamp':'header', 'sample':'nearest', 'max_age_sec':.1}
+                vectors = {key:[{'source':s,'field':'position','names':sources[s]['order']} for s in ('left','right')]
+                           for key in ('observation.state','action')}
+                cfg = {'schema_version':1, 'input':{'bag_glob':str(bag),'require_complete_manifest':False},
+                    'dataset':{'repo_id':'local/single','root':str(root/'dataset'),'fps':1,'task':'single','robot_type':'piper'},
+                    'sources':sources, 'vectors':vectors,
+                    'images':{'observation.images.cam':{'source':'cam','kind':'rgb','storage':'image'}},
+                    'sync':{'min_frames':2,'max_clock_skew_sec':1.0,'max_camera_skew_sec':.1}}
+                with Writer(bag) as writer:
+                    joints = writer.add_connection(sources[side]['topic'], 'sensor_msgs/msg/JointState', typestore=store)
+                    image = writer.add_connection('/cam/image','sensor_msgs/msg/Image',typestore=store)
+                    for i in range(3):
+                        stamp = 10+i
+                        header = Header(seq=i, stamp=Time(sec=stamp,nanosec=0),frame_id='base')
+                        values = np.array([0.,.5,-.5,0.,i*.01,0.,.02], dtype=np.float64)
+                        msg = JointState(header=header,name=sources[side]['order'],position=values,
+                            velocity=np.array([],dtype=np.float64),effort=np.array([],dtype=np.float64))
+                        writer.write(joints,stamp*converter.NS,store.serialize_ros1(msg,msg.__msgtype__))
+                        rgb = Image(header=header,height=4,width=4,encoding='rgb8',is_bigendian=0,
+                            step=12,data=np.full(48,100,dtype=np.uint8))
+                        writer.write(image,stamp*converter.NS,store.serialize_ros1(rgb,rgb.__msgtype__))
+                config = root/'config.yaml'
+                config.write_text(yaml.safe_dump(cfg))
+                converter.run(argparse.Namespace(config=str(config),arms=side,output=None,episodes=None,
+                    limit_episodes=None,max_frames=None,dry_run=False))
+                dataset = LeRobotDataset('local/single',root=root/'dataset',video_backend='pyav')
+                self.assertEqual(tuple(dataset.meta.features['action']['shape']), (7,))
+                self.assertEqual(dataset.meta.features['action']['names'], sources[side]['order'])
+                self.assertEqual(dataset[0]['observation.state'].shape, (7,))
+                np.testing.assert_allclose(dataset[2]['action'], [0.,.5,-.5,0.,.02,0.,.02])
+
     def test_real_rosbag_to_lerobot_including_uint16_depth(self):
         from rosbags.rosbag1 import Writer
         from rosbags.typesys import Stores, get_typestore

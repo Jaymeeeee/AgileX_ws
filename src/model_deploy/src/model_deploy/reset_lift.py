@@ -63,7 +63,7 @@ def lift_before_return(runner):
         actual = controller.flange_poses()
         if tick-began > r['phase_timeout_sec']:
             raise RuntimeError('Reset phase timed out: lifting_arms; no joint return/closing sent')
-        for i, side in enumerate(('left', 'right')):
+        for i, side in enumerate(runner.sides):
             xy_error = np.linalg.norm(actual[i, :2]-start[i, :2])
             z = actual[i, 2]
             angle = orientation_error(actual[i, 3:], start[i, 3:])
@@ -72,7 +72,7 @@ def lift_before_return(runner):
                     or z > goal[i, 2]+lift['max_path_error_m']
                     or angle > lift['orientation_tolerance_rad']):
                 raise RuntimeError(side + ': lift deviated from vertical path/orientation; no joint return sent')
-        if np.any(np.abs(joints[[6, 13]]-r['gripper_open_m']) > r['gripper_tolerance_m']):
+        if np.any(np.abs(joints[runner.gripper_indices]-r['gripper_open_m']) > r['gripper_tolerance_m']):
             raise RuntimeError('Gripper no longer open during lift')
         # Advance only a short distance ahead of actual height; a blocked arm
         # cannot accumulate the entire lift target while the other keeps moving.

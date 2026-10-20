@@ -25,10 +25,22 @@ def ready_error(status, last_received, timeout, required_arms, required_cameras,
     if status.get('state')!='ready':return 'Hardware not ready: '+status.get('reason',status.get('state','unknown'))
     if abs(time.time()-status.get('stamp',0))>timeout:return 'Hardware heartbeat timestamp stale'
     if not allow_partial and (set(status.get('arms',[]))!=set(required_arms) or set(status.get('cameras',[]))!=set(required_cameras)):
-        return 'Full recording requires both arm pairs and all three cameras; allow_partial must be explicit for a subset'
+        return 'Recording requires arms={} and cameras={}; allow_partial must be explicit for a subset'.format(required_arms, required_cameras)
     if not status.get('topics') or not all(t.get('ok') for t in status['topics']):return 'Hardware report has invalid topic data'
     if not status.get('record_topics'):return 'No record topics'
     return ''
+
+
+def selected_hardware(status: dict, sides: list) -> dict:
+    """Select recorded arm topics while retaining global/camera diagnostics."""
+    excluded = {'left', 'right'} - set(sides)
+    def keep(topic):
+        return not any(topic.startswith(('/piper/'+s+'_', '/agilex/teleop/'+s+'_', '/teleop_'+s+'_')) for s in excluded)
+    result = dict(status)
+    result['arms'] = [s for s in ('left', 'right') if s in sides and s in status.get('arms', [])]
+    result['topics'] = [row for row in status.get('topics', []) if keep(row['topic'])]
+    result['record_topics'] = [topic for topic in status.get('record_topics', []) if keep(topic)]
+    return result
 
 
 def output_error(path):
@@ -61,6 +73,11 @@ class Recorder:
         self.timeout=float(rospy.get_param('~status_timeout_sec',3))
         self.allow_partial=bool(rospy.get_param('~allow_partial',False))
         self.required_arms=rospy.get_param('~required_arms',['left','right'])
+        selection = rospy.get_param('~arms', None)
+        if selection is not None:
+            if selection not in ('both', 'left', 'right'):
+                raise ValueError('arms must be both, left or right')
+            self.required_arms = ['left', 'right'] if selection == 'both' else [selection]
         self.required_cameras=rospy.get_param('~required_cameras',['cam_h','cam_l','cam_r'])
         self.compression=rospy.get_param('~compression','lz4')
         self.split_mb=int(rospy.get_param('~split_size_mb',2048))
@@ -76,7 +93,9 @@ class Recorder:
     def on_status(self,msg):
         try:status=json.loads(msg.data)
         except (ValueError,TypeError):return
-        with self.guard:self.hardware=status;self.last_received=time.monotonic()
+        with self.guard:
+            self.hardware=selected_hardware(status, self.required_arms)
+            self.last_received=time.monotonic()
 
     def reason(self):
         error=ready_error(self.hardware,self.last_received,self.timeout,
@@ -199,6 +218,13 @@ class Recorder:
                             self.finish('incomplete',error)
                             rospy.logerr('Recording stopped: %s',error)
                             if self.output_file:raise RuntimeError(error)
+                    # A console reset can finish this CLI episode through the
+                    # stop service. Release its lock so the next record.sh can
+                    # start, rather than leaving an idle recorder behind.
+                    if self.output_file and not auto and self.proc is None and self.manifest:
+                        if self.manifest['state'] != 'complete':
+                            raise RuntimeError(self.manifest.get('reason', 'Recording incomplete'))
+                        return
                 time.sleep(.2)
         finally:
             with self.guard:
@@ -215,6 +241,7 @@ if __name__=='__main__':
         parser=argparse.ArgumentParser(description='Record data.bag, manifest.json and rosbag.log in one directory; Ctrl+C stops and saves.')
         parser.add_argument('--output',required=True,help='Recording directory; previous recording is overwritten after readiness checks')
         parser.add_argument('--allow-partial',action='store_true',help='Allow a ready subset of hardware')
+        parser.add_argument('--arms',choices=('both','left','right'),default='both',help='Record both arms (default), or only left/right')
         options=parser.parse_args(args)
         if not options.output.strip():parser.error('--output must name a directory')
         output=Path(options.output).expanduser().absolute()
@@ -233,5 +260,6 @@ if __name__=='__main__':
             config=Path(rospkg.RosPack().get_path('data_collection'))/'config/recording.yaml'
             settings=yaml.safe_load(config.read_text())
             settings['allow_partial']=options.allow_partial
+            settings['arms']=options.arms
             rospy.set_param('~',settings)
         Recorder(options.output if options else None).run()

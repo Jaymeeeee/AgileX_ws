@@ -19,7 +19,9 @@ def load_config(path):
         if not isinstance(serial, str) or not re.fullmatch(r'[0-9]+', serial) or serial in seen_serials:
             raise ValueError('Camera serials must be unique quoted digit strings')
         seen_serials.add(serial)
-    for side, item in cfg['arms'].items():
+    if cfg.get('topology') not in (None, 'independent_can'):
+        raise ValueError('Unsupported CAN topology')
+    for side, item in list(cfg['arms'].items()) + list(cfg.get('leaders', {}).items()):
         if side not in ('left', 'right') or not re.fullmatch(r'can[0-9]+', item['channel']):
             raise ValueError('Invalid arm side or CAN channel')
         if item['channel'] in seen_channels or item['parser'] not in ('default', 'v188'):
@@ -27,6 +29,8 @@ def load_config(path):
         if item.get('model','unknown') not in ('unknown','piper','piper_h','piper_l','piper_x'):
             raise ValueError('Unsupported arm model for torque conversion')
         seen_channels.add(item['channel'])
+        if 'usb_path' in item and not re.fullmatch(r'[0-9]+-[0-9.]+:[0-9]+\.[0-9]+', item['usb_path']):
+            raise ValueError('Invalid USB physical path')
         for key in ('command_id_offset', 'feedback_id_offset'):
             if not isinstance(item[key], int) or not 0 <= item[key] <= 0x100:
                 raise ValueError('Invalid CAN ID offset')
@@ -47,8 +51,23 @@ def load_config(path):
     return cfg
 
 
+def check_identity(arm):
+    """Fail before connecting a controller if USB enumeration changed."""
+    expected = arm.get('usb_path')
+    if expected:
+        device = Path('/sys/class/net') / arm['channel'] / 'device'
+        if not device.exists() or device.resolve().name != expected:
+            raise RuntimeError('{} USB identity mismatch: expected {}, got {}'.format(
+                arm['channel'], expected, device.resolve().name))
+
+
+def acquisition_can_mode(cfg, mode):
+    # A lone arm needs an ACK-capable USB-CAN peer even for receive-only ROS.
+    return 'deploy' if cfg.get('topology') == 'independent_can' else mode
+
+
 def select(value, available):
-    names = list(available) if value == 'all' else ([] if value in ('none', '') else value.split(','))
+    names = list(available) if value in ('all', 'both') else ([] if value in ('none', '') else value.split(','))
     if len(set(names)) != len(names) or any(n not in available for n in names):
         raise ValueError('Invalid selection {!r}; choices {}'.format(value, list(available)))
     return names

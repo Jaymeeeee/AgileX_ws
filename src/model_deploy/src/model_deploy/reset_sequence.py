@@ -4,7 +4,7 @@ No ROS or SDK imports: the runner receives a controller/observation interface.
 """
 import time
 import numpy as np
-from .core import ActionGuard
+from .core import ActionGuard, selected_sides
 from .reset_lift import validate_lift, lift_before_return
 
 
@@ -37,22 +37,24 @@ class ResetSequence:
         self.cfg, self.controller, self.obs = cfg, controller, observations
         self.clock, self.sleep, self.cancelled, self.report = clock, sleep, cancelled, report
         self.period = 1.0 / cfg['policy']['fps']
+        self.sides = selected_sides(cfg)
+        self.gripper_indices = np.arange(6, 7*len(self.sides), 7)
         r = cfg['reset']
-        self.speed = np.tile([r['joint_speed_rad_s']]*6 + [r['gripper_speed_m_s']], 2)
-        self.tolerance = np.tile([r['joint_tolerance_rad']]*6 + [r['gripper_tolerance_m']], 2)
-        self.guard = ActionGuard(cfg['control'], self.period)
+        self.speed = np.tile([r['joint_speed_rad_s']]*6 + [r['gripper_speed_m_s']], len(self.sides))
+        self.tolerance = np.tile([r['joint_tolerance_rad']]*6 + [r['gripper_tolerance_m']], len(self.sides))
+        self.guard = ActionGuard(cfg['control'], self.period, self.sides)
 
     def run(self, home):
         home = self.guard.bounded(home)
         if self.cancelled():
             raise InterruptedError('Reset cancelled')
         # All targets are validated before any phase is sent.
-        home[GRIPPER_INDICES] = self.cfg['reset']['gripper_closed_m']
+        home[self.gripper_indices] = self.cfg['reset']['gripper_closed_m']
         hold = self.guard.bounded(self.obs.actual())
         opened = hold.copy()
-        opened[GRIPPER_INDICES] = self.cfg['reset']['gripper_open_m']
+        opened[self.gripper_indices] = self.cfg['reset']['gripper_open_m']
         home_open = home.copy()
-        home_open[GRIPPER_INDICES] = self.cfg['reset']['gripper_open_m']
+        home_open[self.gripper_indices] = self.cfg['reset']['gripper_open_m']
         command = hold.copy()
         for phase, goal in (('opening_grippers', opened), ('returning_home', home_open), ('closing_grippers', home)):
             if phase == 'returning_home' and self.cfg['reset'].get('vertical_lift') is not None:

@@ -4,7 +4,7 @@
 
 ## 采集模式话题
 
-采集模式默认启动全部设备时，每台相机 **3 个话题**、每侧 Piper **8 个话题**，另有 2 个硬件状态话题，共 **27 个**。下表 `{cam}` 为 `cam_h/cam_l/cam_r`，`{side}` 为 `left/right`。
+四路主从遥操作带三相机录制时共 **35 个话题**：原有 27 个话题，加上四臂遥操作状态、两侧主臂组合命令和两侧 SDK 实际下发目标；不启动相机时为 26 个。下表列出原有话题，新增话题见[四路主从话题](teleop.md#ros-话题与采集)。`{cam}` 为 `cam_h/cam_l/cam_r`，`{side}` 为 `left/right`。
 
 | 话题 | 消息类型 | 内容 |
 | --- | --- | --- |
@@ -12,9 +12,9 @@
 | `/{cam}/depth/image_rect_raw` | `sensor_msgs/Image` | 原始深度，16UC1，mm，0 无效 |
 | `/{cam}/aligned_depth_to_color/image_raw` | `sensor_msgs/Image` | 重投影到彩色图像坐标的深度，16UC1，mm，0 无效 |
 | `/piper/{side}_bus/joint_states` | `sensor_msgs/JointState` | 从臂六关节实际角度，rad，顺序见 name |
-| `/piper/{side}_bus/leader_targets` | `sensor_msgs/JointState` | 六关节目标指令回显，rad |
+| `/piper/{side}_bus/leader_targets` | `sensor_msgs/JointState` | 主臂六关节人工目标，rad |
 | `/piper/{side}_bus/gripper/actual_stamped` | `sensor_msgs/JointState` | 从臂夹爪实际开口，position[0]，m |
-| `/piper/{side}_bus/gripper/target_stamped` | `sensor_msgs/JointState` | 夹爪目标开口回显，m |
+| `/piper/{side}_bus/gripper/target_stamped` | `sensor_msgs/JointState` | 主臂夹爪目标开口，m |
 | `/piper/{side}_bus/status` | `std_msgs/String`（JSON） | 控制模式、运动/示教状态、故障码和原始 CAN 数据 |
 | `/piper/{side}_bus/gripper/status` | `std_msgs/String`（JSON） | 夹爪开口、状态位、协议力字段和原始 CAN 数据 |
 | `/piper/{side}_bus/motor_feedback` | `hardware_bringup/MotorFeedback` | 六电机电流、轴位置/速度和力矩估算 |
@@ -41,15 +41,15 @@
 
 ### 时间戳与数据含义
 
-- 主臂话题是总线目标回显，不是主臂独立实测反馈。目标报文 ID 为 `0x155/156/157/159`，从臂关节与夹爪反馈为 `0x2A5/2A6/2A7/2A8`；CAN ID 不能区分发送同类指令的不同控制器。
+- 当前主臂目标话题由独立主臂 CAN 的 ROS 节点发布，不是从臂总线上 SDK 指令回显。原生目标报文 ID 为 `0x155/156/157/159`，从臂关节与夹爪反馈为 `0x2A5/2A6/2A7/2A8`；主臂实测、人工目标和约束后的 SDK 下发目标见[四路主从话题](teleop.md#ros-话题与采集)。
 - 六关节角由三帧、六电机反馈由六帧组装；各帧必须更新且默认跨度不超过 50 ms。时间戳取最新分片的主机接收时间，不代表六轴严格同时采样。`joint_states.velocity/effort` 为空，轴速度和力矩见 `motor_feedback`。
 - 图像使用 SDK global/system 时间戳，对齐深度沿用原深度时间戳。深度对齐是同一相机内的空间对齐，三相机没有硬件同步。
 - 相机内参及深度到彩色的外参保存在 `/{cam}/calibration` 参数、硬件状态和录制 manifest 中；不发布 camera_info 或 TF。
 
-协议参考：[主从报文](https://github.com/agilexrobotics/piper_sdk/blob/master/assets/double_piper.MD)、[力矩系数](https://github.com/agilexrobotics/pyAgxArm/blob/master/docs/piper/firmware_reference.md)。查询固件可用官方 [Piper_sdk_ui](https://github.com/agilexrobotics/Piper_sdk_ui) 的 `hardware version`，记录 `S-V…` 软件版本；查询会发送 CAN 帧，需停止采集、独立连接待查机械臂并使用可发送的查询接口，完成后恢复 LISTEN-ONLY。
+协议参考：[主从报文](https://github.com/agilexrobotics/piper_sdk/blob/master/assets/double_piper.MD)、[力矩系数](https://github.com/agilexrobotics/pyAgxArm/blob/master/docs/piper/firmware_reference.md)。当前四臂固件均已查询为 `S-V1.9-0`。`teleop.sh --configure-only` 可初始化独立反馈模式并查询固件，不使能或发送位置目标；四路 CAN 均保持正常 ACK 模式。
 
 ## 部署模式的区别
 
-部署模式不发布主臂目标话题 `leader_targets`、`gripper/target_stamped`，其余设备按启动选择发布。上面的 27 个话题计数适用于完整采集模式，不包含部署、复位或轨迹回放另外发布的进度与动作话题。
+部署模式不发布主臂目标话题 `leader_targets`、`gripper/target_stamped`，其余设备按启动选择发布。上面的 35 个话题计数适用于四路遥操作带三相机采集，不包含部署、复位或轨迹回放另外发布的进度与动作话题。
 
 模型预测和实际下发目标的含义见[部署输出](../src/model_deploy/README.md#查看输出)；数据集的字段顺序与重采样规则见[采集包文档](../src/data_collection/README.md#同步与溯源)。

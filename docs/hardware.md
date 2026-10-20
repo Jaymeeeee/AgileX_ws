@@ -6,25 +6,30 @@
 
 ## 采集模式启动与停止
 
-关闭占用相机的 RealSense Viewer 或其他驱动，然后准备 CAN 并启动硬件：
+数据采集使用四臂软件主从控制，关闭占用相机的 RealSense Viewer 或其他驱动后执行：
 
 ```bash
-~/AgileX_ws/prepare_can.sh
-~/AgileX_ws/start_hardware.sh
+~/AgileX_ws/prepare_can.sh --mode=teleop
+~/AgileX_ws/teleop.sh --execute --cameras=all
+# 输入 d，完成夹爪接管且 READY 后再启动 record.sh。
 ```
 
-`prepare_can.sh` 需要本机 sudo 权限，将 DOWN 接口设为 1 Mbps、LISTEN-ONLY、UP；配置已正确时跳过，正在以其他模式运行时拒绝切换。可指定单口：`~/AgileX_ws/prepare_can.sh can0`。
+当前为四路独立 CAN：左主 can1、右主 can2、左从 can3、右从 can0，并校验 USB 物理路径。
+`prepare_can.sh` 需要本机 sudo 权限，将接口设为 1 Mbps、正常收发、UP，配置已正确时跳过。
+独立单臂需要电脑提供 CAN ACK，因此只读发布也不再使用 LISTEN-ONLY。
+软件主从及录制使用[teleop.sh](teleop.md)，仅观察反馈时才单独启动本页的硬件管理器。
 
-常用启动选项：
+采集终端输入 `r` 后按回车，可保存当前录制并复位四臂；详见[复位动作与操作键](teleop.md#启动)。
+若只需发布反馈或单独检查设备，才使用下面的 `start_hardware.sh`，不要与 `teleop.sh` 同时启动：
 
 ```bash
 # 仅三台相机
 ~/AgileX_ws/start_hardware.sh arms:=none
 # 仅左臂相机
 ~/AgileX_ws/start_hardware.sh arms:=none cameras:=cam_l
-# 仅两组机械臂
+# 仅两台从臂反馈
 ~/AgileX_ws/start_hardware.sh cameras:=none
-# 仅右组机械臂
+# 仅右从臂反馈
 ~/AgileX_ws/start_hardware.sh arms:=right cameras:=none
 ```
 
@@ -47,20 +52,23 @@ rosnode kill /agilex_hardware
 
 ## 切换部署模式与恢复采集
 
-采集模式使用 LISTEN-ONLY；部署模式允许独立 SDK 控制器发送动作，硬件管理器仍负责发布反馈。切换前先结束录制、部署、复位或轨迹回放，再停止旧硬件管理器。两侧主臂须退出控制，静止不代表已经退出。
+操作层分为采集、一般部署、RL 人在环三个模式，最后一个尚未实现，见[模式表](../README.md#硬件与运行模式)。
+硬件管理器内部 record/deploy 都使用正常 CAN。管理器本身仍只接收，不使能或驱动机械臂；
+record 模式的人工作用由独立主臂节点发布，deploy 模式由模型/复位/回放控制器发送。
+切换前先结束录制及当前控制进程，再停止旧硬件管理器。保持四臂物理隔离，不恢复主从直连。
 
 ```bash
 ~/AgileX_ws/prepare_can.sh --mode=deploy
 ~/AgileX_ws/start_hardware.sh mode:=deploy
 ```
 
-仅复位或实机轨迹回放时可加 `cameras:=none`。部署模式不发布 `leader_targets` 和 `gripper/target_stamped`，避免把电脑控制回显作为主臂示范；回显仍可在 `events` 中追溯并标记来源。该模式不要求主臂目标就绪。
+普通部署、独立复位和回放只需要两台从臂通电，主臂可断电；`prepare_can.sh --mode=deploy` 默认仅准备从臂 can3/can0。仅复位或实机轨迹回放时可加 `cameras:=none`。部署模式不发布 `leader_targets` 和 `gripper/target_stamped`，避免把电脑控制回显作为主臂示范；回显仍可在 `events` 中追溯并标记来源。该模式不要求主臂目标就绪。
 
 恢复采集前，停止 SDK 控制程序和硬件管理器，再执行：
 
 ```bash
-~/AgileX_ws/prepare_can.sh --mode=record
-~/AgileX_ws/start_hardware.sh
+~/AgileX_ws/prepare_can.sh --mode=teleop
+~/AgileX_ws/teleop.sh --execute --cameras=all
 ```
 
 `prepare_can.sh` 默认使用 `record`，只在配置已经正确或接口未启用时准备接口；接口正在以其他配置运行时，需要显式指定 `--mode=record` 或 `--mode=deploy`。脚本会检查硬件桥接进程及 SDK 控制锁，拒绝在它们占用接口时重新配置。此脚本只配置接口，不发送使能、复位或运动报文。

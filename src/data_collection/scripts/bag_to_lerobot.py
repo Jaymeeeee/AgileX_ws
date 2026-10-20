@@ -40,10 +40,27 @@ def resolve_path(value: str, base: Path) -> Path:
     return (p if p.is_absolute() else base / p).resolve()
 
 
-def load_config(path: Path) -> dict:
+def load_config(path: Path, arms: str | None = None) -> dict:
     cfg = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(cfg, dict) or cfg.get("schema_version") != 1:
         raise ValueError("配置必须是 schema_version: 1 的 YAML")
+    selection = arms if arms is not None else cfg.get("arms", "both")
+    if selection not in ("both", "left", "right"):
+        raise ValueError("arms 必须为 both、left 或 right")
+    cfg["arms"] = selection
+    if selection != "both":
+        other = "right" if selection == "left" else "left"
+        removed = {sid for sid, spec in cfg["sources"].items()
+                   if spec["topic"].startswith("/piper/" + other + "_")}
+        cfg["sources"] = {sid: spec for sid, spec in cfg["sources"].items() if sid not in removed}
+        cfg["vectors"] = {key: [seg for seg in segments if seg["source"] not in removed]
+                          for key, segments in cfg["vectors"].items()
+                          if any(seg["source"] not in removed for seg in segments)}
+        for key in ("observation.state", "action"):
+            names = [name for seg in cfg["vectors"].get(key, []) for name in seg["names"]]
+            if len(names) != 7 or any(not name.startswith(selection + "_") for name in names):
+                raise ValueError(f"{key}: 单臂转换必须有且仅有所选侧的 7 维状态/动作")
+        cfg["dataset"]["robot_type"] = "piper_single_" + selection
     ds = cfg["dataset"]
     if not isinstance(ds["fps"], int) or isinstance(ds["fps"], bool) or ds["fps"] <= 0:
         raise ValueError("dataset.fps 必须是正整数")
@@ -440,7 +457,7 @@ def validate_dataset(root: Path, cfg: dict, reports: list) -> dict:
 
 def run(args):
     config_path = Path(args.config).expanduser().resolve()
-    cfg = load_config(config_path)
+    cfg = load_config(config_path, arms=getattr(args, "arms", None))
     pattern = str(resolve_path(cfg["input"]["bag_glob"], config_path.parent))
     bags = sorted({Path(p).resolve() for p in glob.glob(pattern)})
     if args.episodes:
@@ -552,6 +569,7 @@ def run(args):
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--config", default=str(DEFAULT_CONFIG), help="YAML 配置")
+    p.add_argument("--arms", choices=("both", "left", "right"), help="默认双臂；单臂只转换所选侧的状态/动作及辅助反馈")
     p.add_argument("--output", help="覆盖 YAML 的数据集输出目录（必须不存在）")
     p.add_argument("--episodes", nargs="+", help="只转换这些采集目录，如 task_0001 task_0002")
     p.add_argument("--limit-episodes", type=int, help="只处理前 N 个 episode")

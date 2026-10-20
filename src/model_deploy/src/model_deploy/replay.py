@@ -6,7 +6,7 @@ from pathlib import Path
 import time
 import numpy as np
 import yaml
-from .core import ActionGuard, NAMES, SIDES, joint_values
+from .core import ActionGuard, NAMES, SIDES, joint_values, selected_sides
 
 
 KEYS = ('left_joints', 'left_gripper', 'right_joints', 'right_gripper')
@@ -17,6 +17,8 @@ INPUT_NAMES = ([f'left_follower_joint_{i}' for i in range(1, 7)],
 
 
 def replay_config(base, path, rate=None):
+    if selected_sides(base) != SIDES:
+        raise ValueError('Bag trajectory replay currently requires both arms; single-arm selection is supported by collection/deployment/reset')
     with open(Path(path).expanduser()) as f:
         r = yaml.safe_load(f)
     if rate is not None:

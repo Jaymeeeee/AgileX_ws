@@ -1,0 +1,25 @@
+schema_version: 1
+active_arms: [left, right]  # --arms left/right 只启动所选主从臂。
+hardware_config: ../../hardware_bringup/config/hardware.yaml
+deployment_config: act.yaml
+fps: 100
+feedback_timeout_sec: 0.25
+command_timeout_sec: 0.30
+source_timeout_sec: 1.5
+alignment_timeout_sec: 60.0
+alignment_joint_tolerance_rad: 0.04
+alignment_gripper_tolerance_m: 0.005
+alignment_settle_sec: 0.5
+# kai0 aligns the leader to the follower before entering drag teaching.
+# An intermediate pose is installation-specific; no unverified pose is inserted.
+alignment_waypoint_rad: null
+sdk_speed_percent: 100
+alignment_sdk_speed_percent: 20
+# false: follow raw absolute leader targets at 100 Hz, as in kai0's ROS relay.
+# Physical range, fresh feedback, CAN health and command watchdog remain active.
+limit_follow_speed: false
+joint_speed_rad_s: 0.30
+gripper_speed_m_s: 0.02
+expected_firmware:
+  leader: {left: S-V1.9-0, right: S-V1.9-0}
+  follower: {left: S-V1.9-0, right: S-V1.9-0}

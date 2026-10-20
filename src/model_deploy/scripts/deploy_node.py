@@ -16,7 +16,7 @@ import rospy
 from sensor_msgs.msg import JointState
 from std_msgs.msg import String
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
-from model_deploy.core import NAMES, ActionGuard, load_config, recv_packet, send_packet
+from model_deploy.core import action_names, selected_sides, ActionGuard, load_config, recv_packet, send_packet
 from model_deploy.observations import Observations
 
 PACKAGE = Path(__file__).resolve().parents[1]
@@ -45,7 +45,9 @@ class Worker:
             self.server.settimeout(0.5)
             self.log = open(log_dir/'inference.log', 'w')
             self.proc = subprocess.Popen([cfg['python'], str(PACKAGE/'scripts/inference_worker.py'),
-                '--config', str(config_path), '--socket', path], env=inference_env(cfg['python']),
+                '--config', str(config_path), '--socket', path,
+                '--arms', 'both' if len(selected_sides(cfg)) == 2 else selected_sides(cfg)[0],
+                '--checkpoint', cfg['checkpoint']], env=inference_env(cfg['python']),
                 stdout=self.log, stderr=subprocess.STDOUT, start_new_session=True)
             deadline = time.monotonic()+cfg['policy']['startup_timeout_sec']
             while self.sock is None:
@@ -100,8 +102,11 @@ def main():
     mode.add_argument('--dry-run', action='store_true')
     mode.add_argument('--probe-firmware', action='store_true', help='CAN query only; no enable or movement')
     p.add_argument('--duration', type=float, help='Stop after this many seconds; default from YAML')
+    p.add_argument('--arms', choices=('both', 'left', 'right'), help='Default: both; select a single follower with left/right')
+    p.add_argument('--checkpoint', help='Override checkpoint; single-arm selection requires matching 7D weights')
     args = p.parse_args(rospy.myargv()[1:])
-    cfg = load_config(args.config)
+    cfg = load_config(args.config, arms=args.arms, checkpoint=args.checkpoint)
+    sides = selected_sides(cfg)
     duration = cfg['policy']['max_duration_sec'] if args.duration is None else args.duration
     if not np.isfinite(duration) or duration <= 0:
         p.error('duration must be positive')
@@ -133,7 +138,7 @@ def main():
             (log_dir/'firmware.json').write_text(json.dumps(controller.firmware, indent=2))
             return
         worker = Worker(cfg, Path(args.config).expanduser().resolve(), log_dir)
-        guard = ActionGuard(cfg['control'], 1/cfg['policy']['fps'])
+        guard = ActionGuard(cfg['control'], 1/cfg['policy']['fps'], sides)
         deadline = time.monotonic()+30
         while True:
             try:
@@ -161,7 +166,7 @@ def main():
         if args.execute:
             if not sys.stdin.isatty():
                 raise RuntimeError('--execute requires an interactive terminal; no unattended start')
-            print('主臂必须已退出控制，双从臂已手动放好。按回车开始；Ctrl+C 取消。', flush=True)
+            print('普通部署控制从臂：'+','.join(sides)+'；主臂可以断电。请退出遥操作并放好从臂及物体；按回车开始，Ctrl+C 取消。', flush=True)
             input()
             obs.deployment_hardware()
             from model_deploy.controller import Controller
@@ -206,7 +211,7 @@ def main():
                     error = str(exc)
                 msg = JointState()
                 msg.header.stamp = rospy.Time.from_sec(anchor)
-                msg.name, msg.position = NAMES, action.tolist()
+                msg.name, msg.position = action_names(sides), action.tolist()
                 raw_pub.publish(msg)
                 if sent is not None:
                     msg.position = sent.tolist()

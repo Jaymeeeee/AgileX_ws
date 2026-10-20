@@ -42,6 +42,17 @@ def summarize(msg, spec):
             [round(v,4) for v in msg.current_a], [round(v,4) for v in torque],
             'current_based_estimate' if len(torque) else 'unavailable_model_unconfirmed')
     data=json.loads(msg.data)
+    if kind=='teleop_status':
+        if data.get('side') != spec['side'] or data.get('role') != spec['role']:
+            raise ValueError('Teleop status identity mismatch')
+        if data.get('fault') or data.get('phase') != spec['phase']:
+            raise ValueError('Teleoperation not active: '+str(data.get('phase')))
+        if spec['role'] == 'follower' and not data.get('gripper_ready'):
+            raise ValueError('Gripper hand input has not picked up follower opening')
+        age=data.get('can_age_sec')
+        if not isinstance(age,(int,float)) or not math.isfinite(age) or not 0 <= age < 1.5:
+            raise ValueError('Teleop CAN source stale')
+        return '{} {} {}'.format(data['side'],data['role'],data['phase'])
     if kind=='status':
         if data['err_code'] or data['arm_status'] not in (0,11,12,13):
             raise ValueError('Arm reports fault: '+msg.data)
@@ -59,7 +70,7 @@ class TopicMonitor:
         self.specs=specs
         self.lock=threading.Lock()
         self.state={s['topic']:dict(count=0,last=None,stamp=None,summary='',error='',times=deque(maxlen=100)) for s in specs}
-        types={'image':Image,'info':CameraInfo,'joint':JointState,'status':String,'gripper_status':String,'motor_feedback':MotorFeedback}
+        types={'image':Image,'info':CameraInfo,'joint':JointState,'status':String,'gripper_status':String,'motor_feedback':MotorFeedback,'teleop_status':String}
         self.subs=[rospy.Subscriber(s['topic'],types[s['kind']],self.callback,s,
                                    queue_size=3,buff_size=4*1024*1024) for s in specs]
 

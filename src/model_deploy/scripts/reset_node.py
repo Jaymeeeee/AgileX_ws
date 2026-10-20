@@ -9,7 +9,7 @@ import signal
 import sys
 import time
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'src'))
-from model_deploy.core import load_config
+from model_deploy.core import load_config, selected_sides
 from model_deploy.reset_pose import atomic_json, load_reset_pose
 from model_deploy.reset_sequence import ResetSequence, validate_reset_config
 
@@ -21,15 +21,18 @@ def main():
     p.add_argument('--config', default=str(PACKAGE/'config/act.yaml'))
     p.add_argument('--from-run', help='Override fixed pose with a deployment log; old logs use an approximate first observation')
     p.add_argument('--dry-run', action='store_true', help='Print reset reference/sequence only; no ROS, SDK, CAN or movement')
+    p.add_argument('--arms', choices=('both', 'left', 'right'), help='Reset selected follower(s); default both')
     args = p.parse_args()
-    cfg = load_config(args.config)
+    cfg = load_config(args.config, arms=args.arms)
+    sides = selected_sides(cfg)
     validate_reset_config(cfg)
     home, reference = load_reset_pose(cfg, args.from_run)
-    plan = dict(reference=reference, sequence=[
-        {'phase': 'opening_grippers', 'both_grippers_m': cfg['reset']['gripper_open_m']},
-        {'phase': 'returning_home', 'left_joints_rad': home[:6].tolist(),
-         'right_joints_rad': home[7:13].tolist(), 'both_grippers_m': cfg['reset']['gripper_open_m']},
-        {'phase': 'closing_grippers', 'both_grippers_m': cfg['reset']['gripper_closed_m']}])
+    gripper_key = 'both_grippers_m' if len(sides) == 2 else 'gripper_m'
+    plan = dict(active_arms=list(sides), reference=reference, sequence=[
+        {'phase': 'opening_grippers', gripper_key: cfg['reset']['gripper_open_m']},
+        {'phase': 'returning_home', **{side+'_joints_rad': home[i*7:i*7+6].tolist() for i, side in enumerate(sides)},
+         gripper_key: cfg['reset']['gripper_open_m']},
+        {'phase': 'closing_grippers', gripper_key: cfg['reset']['gripper_closed_m']}])
     lift = cfg['reset'].get('vertical_lift')
     if lift is not None:
         plan['sequence'].insert(1, dict(phase='lifting_arms', frame='each_arm_base',
@@ -37,7 +40,7 @@ def main():
                                        delta_z_m=lift['distance_m'],
                                        orientation=('allow_bounded_rotation' if lift.get('mode') == 'joint_path'
                                                     else 'hold_measured_at_lift_start'),
-                                       both_grippers_m=cfg['reset']['gripper_open_m']))
+                                       **{gripper_key: cfg['reset']['gripper_open_m']}))
         if lift.get('mode') == 'joint_path':
             plan['sequence'][1].update(max_lateral_m=lift['max_lateral_m'],
                                        max_rotation_rad=lift['max_rotation_rad'])

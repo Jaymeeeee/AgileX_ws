@@ -13,8 +13,8 @@ def plan_joint_lift(fks, joints, measured, low, high, lift, poll=lambda: None):
     """
     joints, measured = np.asarray(joints), np.asarray(measured)
     low, high = np.asarray(low), np.asarray(high)
-    if (joints.shape != (2, 6) or measured.shape != (2, 6)
-            or low.shape != (2, 6) or high.shape != (2, 6)
+    if (len(fks) not in (1, 2) or joints.shape != (len(fks), 6) or measured.shape != (len(fks), 6)
+            or low.shape != (len(fks), 6) or high.shape != (len(fks), 6)
             or not np.isfinite([joints, measured, low, high]).all()
             or np.any(low >= high) or np.any(joints < low) or np.any(joints > high)):
         raise ValueError('Invalid joint lift start/limits; no lift sent')
@@ -61,13 +61,13 @@ def plan_joint_lift(fks, joints, measured, low, high, lift, poll=lambda: None):
                 q = candidate
             pose = np.asarray(fk(q.tolist()))
             if abs(pose[2]-target[2]) > .0002:
-                raise RuntimeError(('left', 'right')[side] + ': no bounded upward joint path; no lift sent')
+                raise RuntimeError('arm slot ' + str(side) + ': no bounded upward joint path; no lift sent')
             path.append(q.copy())
         paths.append(path)
     # Synchronize at equal height waypoints, then subdivide joint segments.
     points = [joints.copy()]
     poses = [origin.copy()]
-    for pair in zip(paths[0][1:], paths[1][1:]):
+    for pair in zip(*(path[1:] for path in paths)):
         end = np.array(pair)
         start = points[-1]
         n = max(1, int(np.ceil(np.max(np.abs(end-start))/.005)))
@@ -95,11 +95,11 @@ def execute_joint_lift(runner):
     plan = c.joint_lift_plan
     start = c.flange_poses()
     command = runner.guard.bounded(runner.obs.actual())
-    indices = np.array([[0, 1, 2, 3, 4, 5], [7, 8, 9, 10, 11, 12]])
+    indices = np.array([[i*7+j for j in range(6)] for i in range(len(runner.sides))])
     if (np.max(np.abs(command[indices]-plan['joints'][0])) > .01
             or np.any(np.linalg.norm(start[:, :3]-plan['measured'][:, :3], axis=1) > lift['position_tolerance_m'])):
         raise RuntimeError('Pose changed since lift planning; rerun reset to replan')
-    command[[6, 13]] = r['gripper_open_m']
+    command[runner.gripper_indices] = r['gripper_open_m']
     goal_z = start[:, 2]+lift['distance_m']
     began, stable_since, index = runner.clock(), None, 1
     runner.report(dict(state='running', phase='lifting_arms', mode='joint_path',
@@ -119,7 +119,7 @@ def execute_joint_lift(runner):
                 or np.any(np.linalg.norm(actual[:, :2]-start[:, :2], axis=1) > lift['max_lateral_m'])
                 or any(orientation_error(a[3:], b[3:]) > lift['max_rotation_rad'] for a, b in zip(actual, start))):
             raise RuntimeError('Joint lift deviated from height/lateral/rotation envelope')
-        if np.any(np.abs(actual_joints[[6, 13]]-r['gripper_open_m']) > r['gripper_tolerance_m']):
+        if np.any(np.abs(actual_joints[runner.gripper_indices]-r['gripper_open_m']) > r['gripper_tolerance_m']):
             raise RuntimeError('Gripper no longer open during lift')
         expected = c.lift_fk(command[indices])
         error = np.linalg.norm(actual[:, :3]-expected[:, :3], axis=1)

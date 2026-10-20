@@ -5,13 +5,14 @@ import threading
 import time
 import can
 import numpy as np
-from hardware_bringup.config import check_can
-from .core import SIDES, ActionGuard
+from hardware_bringup.config import check_can, check_identity
+from .core import selected_sides, ActionGuard
 
 
 class Controller:
     def __init__(self, cfg, observations, require_images=True):
         self.cfg, self.obs = cfg, observations
+        self.sides = selected_sides(cfg)
         self.require_images = require_images
         self.arms, self.grippers, self.locks, self.buses, self.threads = {}, {}, [], [], []
         self.closed = threading.Event()
@@ -20,7 +21,7 @@ class Controller:
         self.fault = None
         self.external = None
         self.last_send = time.monotonic()
-        self.guard = ActionGuard(cfg['control'], 1/cfg['policy']['fps'])
+        self.guard = ActionGuard(cfg['control'], 1/cfg['policy']['fps'], self.sides)
         self.firmware = {}
 
     def read_firmware(self, robot, side):
@@ -59,8 +60,11 @@ class Controller:
 
     def connect(self):
         from pyAgxArm import create_agx_arm_config, AgxArmFactory, resolve_firmware_profile
-        for side in SIDES:
+        for side in self.sides:
             channel = self.cfg['control']['channels'][side]
+            # The ROS hardware configuration binds channels to physical USB ports.
+            if isinstance(getattr(self.obs, 'hardware_config', None), dict):
+                check_identity(self.obs.hardware_config['arms'][side])
             check_can(channel, self.cfg['control']['bitrate'], 'deploy')
             lock = open('/tmp/agilex-controller-{}-{}.lock'.format(os.getuid(), channel), 'a')
             self.locks.append(lock)
@@ -77,7 +81,7 @@ class Controller:
         # Listen before even querying firmware; do not take over an active leader.
         time.sleep(1.0)
         self.check_fault()
-        for side in SIDES:
+        for side in self.sides:
             channel = self.cfg['control']['channels'][side]
             def create(profile):
                 limits = {'joint'+str(i+1): [self.cfg['control']['joint_min'][i],
@@ -123,7 +127,7 @@ class Controller:
                 raise RuntimeError(side + ': SDK CAN transport error: ' + str(robot.get_comm_error()))
 
     def _send(self, target):
-        for i, side in enumerate(SIDES):
+        for i, side in enumerate(self.sides):
             self.arms[side].move_j(target[i*7:i*7+6].tolist())
             self.grippers[side].move_gripper_m(float(target[i*7+6]), self.cfg['control']['gripper_force'])
         self.check_fault()
@@ -138,10 +142,10 @@ class Controller:
         with self.mutex:
             self.active = True  # even partial startup must run stop handling
             self.last_send = time.monotonic()
-            for side in SIDES:
+            for side in self.sides:
                 self.arms[side].set_speed_percent(self.cfg['control']['sdk_speed_percent'])
             self._send(actual)  # replace any old target BEFORE enabling
-            for side in SIDES:
+            for side in self.sides:
                 self.arms[side].enable()
             self.guard.commit(actual)
         thread = threading.Thread(target=self.watchdog, daemon=True)
@@ -192,7 +196,7 @@ class Controller:
     def flange_poses(self):
         """Fresh SDK flange feedback, meters/radians in each arm's base frame."""
         result = []
-        for side in SIDES:
+        for side in self.sides:
             feedback = self.arms[side].get_flange_pose()
             if feedback is None:
                 raise RuntimeError(side + ': no SDK flange feedback for vertical lift')
@@ -208,20 +212,20 @@ class Controller:
         return np.asarray(result)
 
     def lift_fk(self, joints):
-        return np.asarray([self.arms[s].fk(q.tolist()) for s, q in zip(SIDES, joints)])
+        return np.asarray([self.arms[s].fk(q.tolist()) for s, q in zip(self.sides, joints)])
 
     def prepare_joint_lift(self, cancelled=lambda: False):
         """Query limits and plan while inactive, before enabling or moving."""
         from .reset_joint_lift import plan_joint_lift
         if self.active:
             raise RuntimeError('Plan lift before starting controller')
-        low = np.tile(np.asarray(self.cfg['control']['joint_min'], dtype=float), (2, 1))
-        high = np.tile(np.asarray(self.cfg['control']['joint_max'], dtype=float), (2, 1))
+        low = np.tile(np.asarray(self.cfg['control']['joint_min'], dtype=float), (len(self.sides), 1))
+        high = np.tile(np.asarray(self.cfg['control']['joint_max'], dtype=float), (len(self.sides), 1))
         def poll():
             if cancelled():
                 raise InterruptedError('Reset cancelled during lift planning')
             self.check_fault()
-        for i, side in enumerate(SIDES):
+        for i, side in enumerate(self.sides):
             for j in range(6):
                 poll()
                 feedback = self.arms[side].get_joint_angle_vel_limits(j+1)
@@ -231,9 +235,9 @@ class Controller:
                 if a is None or b is None or not np.isfinite([a, b]).all() or a >= b:
                     raise RuntimeError(side + ': invalid device joint limits; no motion sent')
                 low[i, j], high[i, j] = max(low[i, j], a), min(high[i, j], b)
-        joints = self.obs.actual()[[0, 1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12]].reshape(2, 6)
+        joints = self.obs.actual().reshape(len(self.sides), 7)[:, :6]
         measured = self.flange_poses()
-        self.joint_lift_plan = plan_joint_lift([self.arms[s].fk for s in SIDES], joints,
+        self.joint_lift_plan = plan_joint_lift([self.arms[s].fk for s in self.sides], joints,
             measured, low, high, self.cfg['reset']['vertical_lift'], poll)
         return {k: v.tolist() for k, v in self.joint_lift_plan.items()}
 
@@ -245,11 +249,11 @@ class Controller:
             self.guard.bounded(self.obs.actual())
             self.flange_poses()  # recheck immediately before sending either arm
             poses = np.asarray(poses, dtype=float)
-            if (poses.shape != (2, 6) or not np.isfinite(poses).all()
+            if (poses.shape != (len(self.sides), 6) or not np.isfinite(poses).all()
                     or np.any(np.abs(poses[:, 3:]) > np.array([np.pi, np.pi/2, np.pi])+1e-9)
                     or not self.cfg['control']['gripper_min'] <= gripper_width <= self.cfg['control']['gripper_max']):
                 raise ValueError('Invalid Cartesian lift target')
-            for i, side in enumerate(SIDES):
+            for i, side in enumerate(self.sides):
                 self.arms[side].move_l(poses[i].tolist())
                 self.grippers[side].move_gripper_m(float(gripper_width), self.cfg['control']['gripper_force'])
             self.check_fault()
@@ -275,7 +279,7 @@ class Controller:
                 actual = self.guard.bounded(self.obs.actual(status=False))
             except Exception:
                 actual = None
-            for i, side in enumerate(SIDES):
+            for i, side in enumerate(self.sides):
                 robot = self.arms.get(side)
                 if robot is None:
                     continue
