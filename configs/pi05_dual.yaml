@@ -1,0 +1,4 @@
+extends: base.yaml
+policy:
+  type: pi05
+  checkpoint: ../checkpoints/pi05/pretrained_model

@@ -1,0 +1,11 @@
+extends: base.yaml
+robot:
+  arms: [left]
+policy:
+  type: act
+  checkpoint: ../checkpoints/act_left/pretrained_model
+observation:
+  task: 用左臂完成操作
+  camera_map:
+    observation.images.cam_h: cam_h
+    observation.images.cam_l: cam_l

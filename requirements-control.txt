@@ -1,0 +1,5 @@
+-r requirements.txt
+python-can>=3.3.4
+pyAgxArm @ git+https://github.com/agilexrobotics/pyAgxArm.git@d90e234ba8e408cfa964b38aa9120b3131fc9f85
+pyrealsense2>=2.50
+# ROS belongs in record.python only. LeRobot belongs in policy.python only.

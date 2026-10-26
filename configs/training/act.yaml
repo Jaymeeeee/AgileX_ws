@@ -1,0 +1,15 @@
+# Native LeRobot training config. All paths here are relative to this YAML.
+policy:
+  type: act
+  device: cuda
+  push_to_hub: false
+  pretrained_backbone_weights: null
+dataset:
+  repo_id: local/piper_task
+  root: ../../datasets/piper_task
+output_dir: ../../outputs/models/train_act
+batch_size: 8
+steps: 100000
+save_freq: 10000
+wandb:
+  enable: false

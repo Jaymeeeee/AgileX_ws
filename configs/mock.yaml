@@ -1,0 +1,18 @@
+extends: act_left.yaml
+robot:
+  pairs:
+    left:
+      leader: true
+policy:
+  backend: mock
+  checkpoint: null
+  python: /usr/bin/python3
+  device: cpu
+observation:
+  width: 64
+  height: 48
+workflow:
+  auto_start: true
+record:
+  backend: files
+  min_free_gb: 0.01

@@ -1,0 +1,69 @@
+# v4 baseline. Paths are resolved relative to this YAML by train_policy.py.
+# Train on all 105 demonstrations; no held-out validation or environment evaluation.
+dataset:
+  repo_id: local/piper_insert_plug_v4
+  root: ../../datasets/piper_insert_plug_v4
+  episodes: null
+  eval_split: 0.0
+  video_backend: pyav
+  use_imagenet_stats: true
+  image_transforms:
+    enable: false
+
+policy:
+  type: act
+  device: cuda
+  push_to_hub: false
+  pretrained_path: null
+  # State/action dimensions and camera names are inferred from the v4 dataset.
+  n_obs_steps: 1
+  chunk_size: 50
+  n_action_steps: 50
+  vision_backbone: resnet18
+  pretrained_backbone_weights: ResNet18_Weights.IMAGENET1K_V1
+  normalization_mapping:
+    VISUAL: MEAN_STD
+    STATE: MEAN_STD
+    ACTION: MEAN_STD
+  dim_model: 512
+  n_heads: 8
+  dim_feedforward: 3200
+  n_encoder_layers: 4
+  n_decoder_layers: 1
+  dropout: 0.1
+  use_vae: true
+  latent_dim: 32
+  n_vae_encoder_layers: 4
+  kl_weight: 10.0
+  temporal_ensemble_coeff: null
+  optimizer_lr: 1.0e-5
+  optimizer_lr_backbone: 1.0e-5
+  optimizer_weight_decay: 1.0e-4
+
+output_dir: ../../outputs/models/act_piper_insert_plug_v4_20261025
+job_name: act_piper_insert_plug_v4
+resume: false
+seed: 1000
+batch_size: 32
+steps: 50000
+num_workers: 4
+prefetch_factor: 2
+persistent_workers: true
+dataloader_multiprocessing_context: spawn
+# ACT preset: AdamW, betas=(0.9, 0.999), eps=1e-8, grad_clip_norm=10; no scheduler.
+use_policy_training_preset: true
+accelerator:
+  mixed_precision: bf16
+  gradient_accumulation:
+    steps: 1
+
+save_checkpoint: true
+save_freq: 5000
+log_freq: 50
+eval_steps: 0
+env_eval_freq: 0
+wandb:
+  enable: false
+save_checkpoint_to_hub: false
+job:
+  target: local

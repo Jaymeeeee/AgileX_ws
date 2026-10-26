@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "piper-sdk-workflows"
+version = "1.0.0"
+description = "Standalone Piper SDK control, generic policies and isolated ROS collection"
+requires-python = ">=3.8"
+dependencies = ["numpy>=1.19", "PyYAML>=5.3"]
+
+[project.scripts]
+piper = "piper_control.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["piper_control*"]

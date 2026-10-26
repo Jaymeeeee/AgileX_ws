@@ -1,0 +1,25 @@
+extends: base.yaml
+robot:
+  pairs:
+    left:
+      leader: true
+    right:
+      leader: true
+policy:
+  type: pi05_rlt
+  checkpoint: ../checkpoints/pi05_rlt/pretrained_model
+workflow:
+  mode: online_rl
+  learner: pi05_rlt
+  rlt:
+    replay_windows: checkpoint_stride  # uses the checkpoint's action_stride
+    batch_size: 32
+    replay_capacity: 100000
+    exploration: true
+    update_timeout_sec: 600
+    max_episode_steps: 10000
+    snapshot_max_bytes: 8589934592     # 8 GiB disk spool; images do not accumulate in RAM
+    snapshot_min_free_bytes: 1073741824 # reserve 1 GiB free disk space
+
+record:
+  backend: files

@@ -1,0 +1,78 @@
+schema_version: 1
+
+robot:
+  profile: piper
+  arms: [left, right]
+  action_space: joint_position
+  firmware: S-V1.9-0
+  bitrate: 1000000
+  can_tx_queue_len: 64            # prepare_can: absorb short CAN bursts; not an unbounded action queue
+  control_hz: 100
+  move_speed_percent: 100          # SDK set_speed_percent, no software slew limiter
+  mode_settle_sec: 0.1             # fixed pause after SDK mode commands
+  gripper_force: 1.0
+  can_config: hardware/can.yaml
+  # true resolves <side>_<role> in can_config; false leaves the device disconnected.
+  pairs:
+    left:
+      leader: false
+      follower: true
+    right:
+      leader: false
+      follower: true
+
+policy:
+  backend: lerobot
+  type: act
+  # Path is relative to this YAML. Replace with your task-trained checkpoint.
+  checkpoint: ../checkpoints/act/pretrained_model
+  python: ~/miniconda3/envs/lerobot/bin/python
+  # Optional existing checkout only. No download or clone is performed.
+  lerobot_source: null
+  device: cuda
+  execution: auto
+  startup_timeout_sec: 120.0
+  inference_timeout_sec: 2.0
+  overrides: {}
+
+observation:
+  task: 用双臂将插头插入插座
+  camera_map:
+    observation.images.cam_h: cam_h
+    observation.images.cam_l: cam_l
+    observation.images.cam_r: cam_r
+  cameras:
+    cam_h: {serial: '262522071923'}
+    cam_l: {serial: '262522071867'}
+    cam_r: {serial: '262522070143'}
+  width: 640
+  height: 480
+  fps: 15
+  depth: false
+  align_depth: false              # requires depth: true; retains raw depth too
+  image_resize: none
+  action_semantics: absolute_joint_position_rad_gripper_m
+  # Omitted state_names/action_names resolve to selected arms in canonical order:
+  # left_joint_1..6, left_gripper_width, right_joint_1..6, right_gripper_width.
+  # To reorder model features, declare BOTH the corresponding names and a matching checkpoint.
+
+workflow:
+  mode: deploy
+  learner: none
+  policy_hz: 15
+  auto_start: false
+  max_episode_sec: 120
+  success_reward: 1.0
+  failure_reward: 0.0
+
+record:
+  backend: none
+  python: /usr/bin/python3
+  ros_setup: /opt/ros/noetic/setup.bash
+  startup_timeout_sec: 20.0
+  command_timeout_sec: 5.0
+  output_dir: ../outputs/sessions/piper
+  topic_prefix: /piper
+  compression: lz4
+  queue_size: 256
+  min_free_gb: 2.0

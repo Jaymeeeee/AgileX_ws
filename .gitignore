@@ -17,11 +17,22 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
 .venv/
 
 # 本地配置
 .env
-.vscode/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
 
 # 独立 Git 仓库，在自己的 test/pi05_rlt 分支提交与推送；见 third_party/README.md。
 /third_party/lerobot/
+
+# Recoverable pre-rewrite local source snapshots
+/.legacy/
+
+# Python package build metadata
+*.egg-info/
+/dist/

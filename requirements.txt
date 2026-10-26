@@ -1,0 +1,3 @@
+# Core configuration, array contracts and local process transport.
+numpy>=1.19
+PyYAML>=5.3

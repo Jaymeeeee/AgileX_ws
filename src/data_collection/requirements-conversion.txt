@@ -1,4 +1,0 @@
-# Install in the LeRobot Python >= 3.12 environment, not ROS Noetic's Python 3.8.
-# LeRobot itself is installed editable from ../../third_party/lerobot.
-rosbags==0.11.7
-PyYAML>=6.0,<7

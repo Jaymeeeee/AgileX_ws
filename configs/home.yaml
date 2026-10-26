@@ -1,0 +1,9 @@
+extends: base.yaml
+robot:
+  # Explicit targets preserved from the previous hardware configuration.
+  # Joint interpolation only: this is not a collision-free Cartesian path.
+  home_position:
+    left: [0.0, 0.0, 0.0, 0.0, 0.4188790204786391, 0.0, 0.1]
+    right: [0.0, 0.0, 0.0, 0.0, 0.4188790204786391, 0.0, 0.1]
+record:
+  backend: none

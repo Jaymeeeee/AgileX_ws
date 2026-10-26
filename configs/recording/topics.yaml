@@ -1,0 +1,26 @@
+# Exact topic names after expanding:
+#   {prefix}: record.topic_prefix (normally /piper)
+#   {side}: robot.arms; leader entries are omitted for sides without a leader
+#   {camera}: unique camera names in observation.camera_map
+# A required topic must contain at least one message in the saved bag.
+# Camera capture must also enable observation.depth and observation.align_depth.
+required:
+  - "{prefix}/state"
+  - "{prefix}/action"
+  - "{prefix}/action_metadata"
+  - "{prefix}/arms/{side}/follower/joint_states"
+  - "{prefix}/arms/{side}/follower/diagnostics"
+  - "{prefix}/arms/{side}/leader/command"
+  - "{prefix}/cameras/{camera}/color/image_raw"
+  - "{prefix}/cameras/{camera}/color/camera_info"
+  - "{prefix}/cameras/{camera}/depth/image_raw"
+  - "{prefix}/cameras/{camera}/depth/camera_info"
+  - "{prefix}/cameras/{camera}/aligned_depth_to_color/image_raw"
+  - "{prefix}/cameras/{camera}/aligned_depth_to_color/camera_info"
+
+# Events are sparse. In leader mode the SDK may provide command frames without
+# measured leader joint/driver feedback; do not label commands as measurements.
+optional:
+  - "{prefix}/events"
+  - "{prefix}/arms/{side}/leader/joint_states"
+  - "{prefix}/arms/{side}/leader/diagnostics"

@@ -1,0 +1,66 @@
+extends: base.yaml
+
+robot:
+  arms: [left, right]
+  pairs:
+    left:
+      leader: true
+      follower: true
+    right:
+      leader: true
+      follower: true
+
+policy:
+  backend: lerobot
+  type: act
+  checkpoint: ../outputs/models/act_piper_insert_plug_v3_all_20261017/checkpoints/028750/pretrained_model
+  python: ~/miniconda3/envs/lerobot/bin/python
+  lerobot_source: ../third_party/lerobot
+  device: cuda
+  execution: step
+
+observation:
+  task: 用双臂将插头插入插座
+  depth: false
+  align_depth: false
+  # Training order: left six joints + gripper, then right six joints + gripper.
+  state_names:
+    - left_joint_1
+    - left_joint_2
+    - left_joint_3
+    - left_joint_4
+    - left_joint_5
+    - left_joint_6
+    - left_gripper_width
+    - right_joint_1
+    - right_joint_2
+    - right_joint_3
+    - right_joint_4
+    - right_joint_5
+    - right_joint_6
+    - right_gripper_width
+  action_names:
+    - left_joint_1
+    - left_joint_2
+    - left_joint_3
+    - left_joint_4
+    - left_joint_5
+    - left_joint_6
+    - left_gripper_width
+    - right_joint_1
+    - right_joint_2
+    - right_joint_3
+    - right_joint_4
+    - right_joint_5
+    - right_joint_6
+    - right_gripper_width
+
+workflow:
+  mode: deploy
+  learner: none
+  auto_start: false
+  policy_hz: 15
+  max_episode_sec: 120
+
+record:
+  backend: none

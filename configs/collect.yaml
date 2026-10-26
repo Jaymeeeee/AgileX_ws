@@ -1,0 +1,18 @@
+extends: base.yaml
+robot:
+  pairs:
+    left:
+      leader: true
+    right:
+      leader: true
+observation:
+  # Collection retains RGB, raw depth and depth aligned to RGB for each camera.
+  depth: true
+  align_depth: true
+workflow:
+  mode: collect
+  learner: none
+
+record:
+  backend: ros
+  topics_config: recording/topics.yaml

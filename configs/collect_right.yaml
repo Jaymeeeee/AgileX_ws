@@ -1,0 +1,33 @@
+extends: collect.yaml
+
+robot:
+  arms: [right]
+  # Keep state publication below the earlier 100 Hz collection workload.
+  control_hz: 30
+  startup_enable_timeout_sec: 10.0
+  startup_alignment_timeout_sec: 10.0
+  pairs:
+    left:
+      leader: false
+      follower: false
+    right:
+      leader: true
+      follower: true
+
+observation:
+  task: 右臂人工示教
+  # Right-arm collection uses the top and right-wrist cameras.
+  # RGB/depth/aligned-depth streams are inherited from collect.yaml.
+  camera_map:
+    observation.images.cam_h: cam_h
+    observation.images.cam_r: cam_r
+
+workflow:
+  auto_start: true
+  policy_hz: 15
+  # Manual bag start/stop is independent of the ongoing human control session.
+  max_episode_sec: null
+
+record:
+  # Publish only. Run scripts/record.py --output DIR to create each bag.
+  backend: ros_publish

@@ -1,0 +1,4 @@
+extends: base.yaml
+policy:
+  type: act
+  checkpoint: ../checkpoints/act/pretrained_model

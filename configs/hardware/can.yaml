@@ -1,0 +1,13 @@
+# USB-CAN adapter identities, shared by all robot/model configurations.
+# Bound from the existing arm mapping and USB topology on 2026-10-23.
+# USB serial numbers remain the same when canN indices or USB sockets change.
+# Keep each adapter connected to the same physical arm.
+adapters:
+  left_leader:
+    usb_serial: '004B001F4648571220363032'
+  left_follower:
+    usb_serial: '0033001E4648570920363032'
+  right_leader:
+    usb_serial: '003400164648570220393831'
+  right_follower:
+    usb_serial: '0039004A4648571220363032'

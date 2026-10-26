@@ -1,0 +1,12 @@
+extends: base.yaml
+robot:
+  pairs:
+    left:
+      leader: true
+    right:
+      leader: true
+workflow:
+  mode: teleop
+  auto_start: true
+record:
+  backend: none
