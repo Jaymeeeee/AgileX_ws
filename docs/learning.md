@@ -169,7 +169,16 @@ python scripts/train_policy.py --config configs/training/act.yaml \
 
 ## π0.5/RLT 在线学习
 
-RLT 依赖 [现有自定义 LeRobot 分支](../third_party/README.md)。填写 `configs/rlt_online.yaml` 的 checkpoint、模型解释器和必要的冻结 π0.5 路径后：
+RLT 依赖 [现有自定义 LeRobot 分支](../third_party/README.md)。在 `configs/rlt_online.yaml` 中填写 RLT checkpoint、模型解释器及 LeRobot 源码路径。若 checkpoint 保存的冻结模型或 tokenizer 路径不适用于当前机器，可覆盖对应字段：
+
+```yaml
+policy:
+  overrides:
+    pi05_pretrained_path: /path/to/pi05/pretrained_model
+    text_tokenizer_name: /path/to/tokenizer
+```
+
+这两个资源路径使用本地绝对路径，运行时不会自动下载。RLT checkpoint 必须可用于推理；第一阶段的 `mode: rlt_training` 配置不能直接用于实机工作流。完成配置后运行：
 
 ```bash
 python scripts/run.py --config configs/rlt_online.yaml --execute

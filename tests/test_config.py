@@ -93,9 +93,10 @@ class ConfigTests(unittest.TestCase):
                 load_config(path)
 
     def test_all_example_configs_validate_without_lerobot(self):
-        # These two files describe offline bag conversion, not an SDK workflow.
+        # These files describe offline bag conversion, not an SDK workflow.
         # Classify by explicit filename so malformed runtime configs still fail.
         conversion_configs = {
+            "lerobot_insert_plug_random.yaml",
             "lerobot_insert_plug_v4.yaml",
             "lerobot_insert_plug_v4_with_motor_state.yaml",
         }

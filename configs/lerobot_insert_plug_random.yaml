@@ -1,0 +1,46 @@
+# Paths are relative to this config, not the terminal's working directory.
+# Position-only dataset: no motor current, estimated torque, or JointState.effort.
+schema_version: 1
+input_dir: ../bags/insert_plug_random
+output_dir: ../datasets/piper_insert_plug_random
+dataset:
+  repo_id: local/piper_insert_plug_random
+  fps: 15
+  task: Insert the plug into the socket.
+  robot_type: piper_right
+
+# Six absolute joint positions in radians, then gripper opening in metres.
+joint_names:
+  - right_joint_1
+  - right_joint_2
+  - right_joint_3
+  - right_joint_4
+  - right_joint_5
+  - right_joint_6
+  - right_gripper_width
+
+sources:
+  state:
+    topic: /piper/arms/right/follower/joint_states
+  action:
+    # Successfully forwarded leader targets; NOT follower feedback or prediction.
+    topic: /piper/action
+  cam_h:
+    topic: /piper/cameras/cam_h/color/image_raw
+  cam_r:
+    topic: /piper/cameras/cam_r/color/image_raw
+action_metadata_topic: /piper/action_metadata
+
+sync:
+  # Causal zero-order hold for every stream, with no future samples/interpolation.
+  max_age_sec: 0.15
+  max_clock_skew_sec: 2.0
+  min_frames: 2
+  max_pending_frames: 128
+
+video:
+  vcodec: h264
+  pix_fmt: yuv420p
+  crf: 18
+  preset: fast
+  g: 15

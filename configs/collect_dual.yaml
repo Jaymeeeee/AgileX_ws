@@ -1,0 +1,14 @@
+# Dual-arm teleoperation with ROS publication; record each demonstration separately.
+extends: collect.yaml
+
+robot:
+  arms: [left, right]
+  control_hz: 30
+
+workflow:
+  auto_start: true
+  policy_hz: 15
+  max_episode_sec: null
+
+record:
+  backend: ros_publish
